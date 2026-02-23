@@ -35,6 +35,7 @@ local ClientIsDragging = ReplicatedStorage.Interaction.ClientIsDragging
 local RemoteProxy      = ReplicatedStorage.Interaction.RemoteProxy
 local SendUserNotice   = ReplicatedStorage.Notices.SendUserNotice
 local AxeFolder        = ReplicatedStorage.AxeClasses
+local RequestSave      = ReplicatedStorage.LoadSaveRequests.RequestSave
 
 -- ───────────────────────────────────────────────────────
 --  HELPERS
@@ -75,60 +76,120 @@ local function safeSuicide()
 end
 
 -- ───────────────────────────────────────────────────────
---  DUPE AXE — real logic
---  In LT2, when you die with a tool EQUIPPED in your hand,
---  the server automatically drops it into the world.
---  Your save still has the axe, so respawn restores it.
---  Walk to your land → pick up the dropped axe = duplicated.
---
---  Steps: Equip axe → confirm it's in hand → die → done.
+-- ─── REMOTES needed for dupe ───────────────────────────
+local RequestLoad  = ReplicatedStorage.LoadSaveRequests.RequestLoad
+local ClientMayLoad = ReplicatedStorage.LoadSaveRequests.ClientMayLoad
+local PropertyPurchasingClient = getsenv(
+    game.Players.LocalPlayer.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient
+)
+
 -- ───────────────────────────────────────────────────────
+--  DUPE AXE — REAL LOGIC
+--
+--  LT2 dupe works like this:
+--  1. Your save has the axe recorded (slot is loaded)
+--  2. Physically DROP the axe into the world
+--  3. Wait for the 60s reload cooldown to clear
+--  4. Reload the SAME slot → save restores axe to inventory
+--  5. World axe still sitting there → pick it up = 2 axes
+--
+--  Dying is NOT part of the dupe. The dropped axe stays in
+--  the world independently of your character.
+-- ───────────────────────────────────────────────────────
+local dupeRunning = false
+
 local function dupeAxe()
-    local c  = char()
-    local h  = hum()
+    if dupeRunning then return notify('Dupe already running!') end
+
+    local c = char()
+    local h = hum()
     if not c or not h then return notify('No character!') end
 
-    -- Get first axe from backpack
+    -- Check a slot is loaded
+    local slot = Player.CurrentSaveSlot.Value
+    if not slot or slot <= 0 then
+        return notify('Load a save slot first! (use in-game menu)')
+    end
+
+    -- Find an axe
     local axe = nil
     for _, v in ipairs(Player.Backpack:GetChildren()) do
         if v:FindFirstChild('CuttingTool') then axe = v; break end
     end
-
-    -- If already equipped check character too
     if not axe then
         for _, v in ipairs(c:GetChildren()) do
             if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe = v; break end
         end
     end
+    if not axe then return notify('No axe found!') end
 
-    if not axe then return notify('No axe found! Buy one first.') end
+    dupeRunning = true
+    notify('Step 1: Dropping axe into world...')
 
-    -- Equip the axe into character hand
-    h:EquipTool(axe)
+    -- Unequip first so it drops from backpack correctly
+    h:UnequipTools()
+    task.wait(0.2)
 
-    -- Wait until it's actually equipped (parented to character)
+    -- Drop the axe — it lands physically in workspace.PlayerModels
+    local r = root()
+    if r then ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame) end
+
+    -- Wait a moment to confirm drop registered
+    task.wait(0.5)
+
+    -- Check it actually dropped (no longer in backpack or character)
+    local stillHaveIt = false
+    for _, v in ipairs(Player.Backpack:GetChildren()) do
+        if v:FindFirstChild('CuttingTool') then stillHaveIt = true; break end
+    end
+    for _, v in ipairs(c:GetChildren()) do
+        if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then stillHaveIt = true; break end
+    end
+    if stillHaveIt then
+        dupeRunning = false
+        return notify('Drop failed — make sure you are in-game with a loaded slot.')
+    end
+
+    notify('Step 2: Axe dropped! Waiting for reload cooldown...')
+
+    -- Wait for ClientMayLoad to allow loading again (the 60s cooldown)
     local waited = 0
+    while not pcall(function()
+        assert(ClientMayLoad:InvokeServer(Player) == true)
+    end) do
+        task.wait(1)
+        waited += 1
+        if waited % 10 == 0 then
+            notify('Still waiting for cooldown... ('..waited..'s)')
+        end
+        if waited > 120 then
+            dupeRunning = false
+            return notify('Cooldown wait timed out. Try reloading manually.')
+        end
+    end
+
+    notify('Step 3: Reloading slot '..slot..'...')
+
+    -- Reload the slot in a coroutine (it blocks until land is placed)
+    task.spawn(function()
+        pcall(function()
+            RequestLoad:InvokeServer(slot, Player)
+        end)
+    end)
+
+    -- Keep confirming the property selection dialog while loading
+    -- This is required to auto-confirm the land placement popup
+    local loadTimeout = 0
     repeat
-        task.wait(0.05)
-        waited += 0.05
-    until (c:FindFirstChildOfClass('Tool') ~= nil) or waited >= 3
+        task.wait(0.1)
+        loadTimeout += 0.1
+        pcall(function()
+            PropertyPurchasingClient:selectionMade()
+        end)
+    until (not Player.CurrentlySavingOrLoading.Value) or loadTimeout > 30
 
-    if not c:FindFirstChildOfClass('Tool') then
-        return notify('Axe failed to equip — try again.')
-    end
-
-    -- Brief wait so server registers the equipped tool before death
-    task.wait(0.3)
-
-    -- Die with axe equipped → LT2 server drops it into world automatically
-    -- Your save restores the axe on respawn → pick up dropped one = dupe
-    local h2 = c:FindFirstChild('Head')
-    if h2 then
-        h2:Destroy()
-    else
-        h.Health = 0
-    end
-    notify('Dupe fired! After respawn, walk back and pick up the dropped axe.')
+    dupeRunning = false
+    notify('Done! Axe restored from save. Go pick up the dropped one = 2 axes!')
 end
 
 -- ───────────────────────────────────────────────────────
@@ -667,40 +728,56 @@ end
 -- ─── DUPE ───────────────────────────────────────────────
 local Dp = pages['Dupe']
 
-Section(Dp, 'Save Info')
+Section(Dp, 'Status')
 
--- Live label showing current loaded slot
 local slotLabel = inst('TextLabel', {
-    Text='Your Loaded Slot:  checking...',
-    Size=UDim2.new(1,0,0,36), BackgroundColor3=EL,
+    Text='Loaded Slot:  checking...',
+    Size=UDim2.new(1,0,0,38), BackgroundColor3=EL,
     BackgroundTransparency=0, BorderSizePixel=0,
     Font=Enum.Font.GothamBold, TextSize=13, TextColor3=TPRI,
     TextXAlignment=Enum.TextXAlignment.Left, Parent=Dp
 })
 rnd(slotLabel); pad(slotLabel, 0,0,12,12)
 
--- Refresh the label every second
+local cdLabel = inst('TextLabel', {
+    Text='Reload cooldown: checking...',
+    Size=UDim2.new(1,0,0,38), BackgroundColor3=EL,
+    BackgroundTransparency=0, BorderSizePixel=0,
+    Font=Enum.Font.Gotham, TextSize=12, TextColor3=TSEC,
+    TextXAlignment=Enum.TextXAlignment.Left, Parent=Dp
+})
+rnd(cdLabel); pad(cdLabel, 0,0,12,12)
+
+-- Live status updater
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
             local slot = Player.CurrentSaveSlot.Value
-            local txt = (slot and slot > 0) and ('Your Loaded Slot:  '..tostring(slot)) or 'Your Loaded Slot:  None (load one!)'
-            slotLabel.Text = txt
-            slotLabel.TextColor3 = (slot and slot > 0) and ACCENT or Color3.fromRGB(220,100,80)
+            slotLabel.Text = (slot and slot > 0)
+                and ('✅  Loaded Slot:  '..tostring(slot))
+                or  '❌  No slot loaded — use in-game menu first!'
+            slotLabel.TextColor3 = (slot and slot > 0) and ACCENT or Color3.fromRGB(220,80,80)
+
+            local canLoad = ClientMayLoad:InvokeServer(Player)
+            cdLabel.Text = canLoad
+                and '✅  Ready to reload'
+                or  '⏳  Cooldown active — dupe will wait automatically'
+            cdLabel.TextColor3 = canLoad and ACCENT or Color3.fromRGB(220,180,60)
         end)
     end
 end)
 
 Section(Dp, 'Dupe Axe')
-Hint(Dp, 'Load your save first. Script equips your axe then kills you — LT2 drops it in the world. Respawn restores it from save. Pick up the dropped axe = duplicated.')
+Hint(Dp, 'Needs slot loaded. Drops axe → waits for 60s cooldown → reloads your slot → axe restored. Walk back and pick up the dropped axe = 2 axes. Runs fully automatic.')
 Button(Dp, '🪓  Dupe Axe', function()
     task.spawn(dupeAxe)
 end)
 
-Section(Dp, 'Manual Controls')
+Section(Dp, 'Manual')
 Button(Dp, 'Drop All Axes', function()
     local h = hum()
     if h then h:UnequipTools() end
+    task.wait(0.2)
     local axes = getAxes()
     if #axes == 0 then return notify('No axes found!') end
     for _, axe in ipairs(axes) do
@@ -708,7 +785,7 @@ Button(Dp, 'Drop All Axes', function()
         if r then ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame) end
         task.wait(0.1)
     end
-    notify('Dropped '..#axes..' axe(s).')
+    notify('Dropped '..#axes..' axe(s) into world.')
 end)
 Button(Dp, 'Safe Suicide  ⚠', function()
     safeSuicide()
