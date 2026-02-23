@@ -4755,10 +4755,10 @@ local T = {
     Separator    = Color3.fromRGB(30,  40,  58),
     Corner       = UDim.new(0, 7),
     SmallCorner  = UDim.new(0, 5),
-    SidebarW     = 128,
-    RowH         = 34,
-    WinW         = 490,
-    WinH         = 460,
+    SidebarW     = 122,
+    RowH         = 30,
+    WinW         = 420,
+    WinH         = 360,
 }
 
 -- ─────────────────────────────────────────────────────────────────
@@ -4886,7 +4886,7 @@ UICornerR(Main); UIStrokeR(Main, Color3.fromRGB(38,52,72), 1)
 
 -- Title bar
 local TBar = New("Frame", {
-    Size=UDim2.new(1,0,0,34),
+    Size=UDim2.new(1,0,0,30),
     BackgroundColor3=T.SidebarBG, BorderSizePixel=0, ZIndex=6, Parent=Main,
 })
 New("Frame", {
@@ -4934,7 +4934,7 @@ UICornerR(MinBtn, UDim.new(0,5))
 
 -- Body layout
 local Body = New("Frame", {
-    Size=UDim2.new(1,0,1,-34), Position=UDim2.new(0,0,0,34),
+    Size=UDim2.new(1,0,1,-30), Position=UDim2.new(0,0,0,30),
     BackgroundTransparency=1, BorderSizePixel=0, Parent=Main,
 })
 local Sidebar = New("Frame", {
@@ -5016,7 +5016,7 @@ local ActiveTab = nil
 
 local function CreateTab(name, icon)
     local btn = New("TextButton", {
-        Name=name, Size=UDim2.new(1,0,0,30),
+        Name=name, Size=UDim2.new(1,0,0,26),
         BackgroundColor3=T.ElementBG, BackgroundTransparency=1,
         Font=Enum.Font.Gotham, TextSize=11, TextColor3=T.TextSec,
         Text=(icon or "  ").."  "..name,
@@ -5042,7 +5042,7 @@ local function CreateTab(name, icon)
         BottomImage="rbxasset://textures/ui/Scroll/scroll-middle.png",
         Visible=false, Parent=PageContainer,
     })
-    UIPad(page,8,0,10,10); UIList(page,nil,6)
+    UIPad(page,6,0,8,8); UIList(page,nil,4)
     -- bottom spacer
     New("Frame", {
         Size=UDim2.new(1,0,0,18), BackgroundTransparency=1,
@@ -5067,7 +5067,7 @@ local function CreateTab(name, icon)
             Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,0,22),
             BackgroundColor3=T.Separator, BorderSizePixel=0, Parent=f,
         })
-        New("Frame", {Size=UDim2.new(1,0,0,4), BackgroundTransparency=1, Parent=f})
+        New("Frame", {Size=UDim2.new(1,0,0,2), BackgroundTransparency=1, Parent=f})
     end
 
     -- ── AddToggle ──
@@ -5124,12 +5124,12 @@ local function CreateTab(name, icon)
         local mn=opts.Min or 0; local mx=opts.Max or 100
         local step=opts.Step or 1; local val=opts.Default or mn
         local row = New("Frame", {
-            Size=UDim2.new(1,0,0,54), BackgroundColor3=T.ElementBG,
+            Size=UDim2.new(1,0,0,48), BackgroundColor3=T.ElementBG,
             BorderSizePixel=0, Parent=page,
         })
         UICornerR(row)
         local topRow = New("Frame", {
-            Size=UDim2.new(1,-22,0,24), Position=UDim2.new(0,11,0,6),
+            Size=UDim2.new(1,-22,0,22), Position=UDim2.new(0,11,0,5),
             BackgroundTransparency=1, Parent=row,
         })
         New("TextLabel", {
@@ -5145,7 +5145,7 @@ local function CreateTab(name, icon)
             TextXAlignment=Enum.TextXAlignment.Right, Parent=topRow,
         })
         local track = New("Frame", {
-            Size=UDim2.new(1,-22,0,6), Position=UDim2.new(0,11,0,36),
+            Size=UDim2.new(1,-22,0,6), Position=UDim2.new(0,11,0,32),
             BackgroundColor3=T.SliderTrack, BorderSizePixel=0, Parent=row,
         })
         UICornerR(track, UDim.new(1,0))
@@ -5768,6 +5768,12 @@ end)
 ShopTab:AddSection("Blueprints")
 ShopTab:AddButton("Purchase All Blueprints", function() Ancestor:PurchaseAllBlueprints() end)
 
+ShopTab:AddSection("Wood Selling")
+ShopTab:AddButton("Sell All Logs", function() Ancestor:SellAllLogs() end)
+ShopTab:AddToggle("Click To Sell", {Default=GUISettings.ClickToSell}, function(v)
+    GUISettings.ClickToSell = v; Ancestor:ClickToSell(v)
+end)
+
 ShopTab:AddSection("NPC Options")
 ShopTab:AddToggle("Faster Dialogue",  {Default=GUISettings.FastCheckout},    function(v) GUISettings.FastCheckout   = v; Ancestor:FastCheckout(v and 0.5 or 1.5) end)
 ShopTab:AddToggle("Fix NPC Range",    {Default=GUISettings.FixCashierRange}, function(v) GUISettings.FixCashierRange = v; Ancestor:FixCashierRange(v and 'Enable' or 'Disable') end)
@@ -5808,9 +5814,52 @@ end)
 AxeTab:AddButton("Drop All Axes", function() Ancestor:DropTools() end)
 
 AxeTab:AddSection("Axe Info")
-local AxeNameLbl     = AxeTab:AddLabel("Current Axe: Not Found")
-local AxeRangeLbl    = AxeTab:AddLabel("Range: NULL")
-local AxeCooldownLbl = AxeTab:AddLabel("Cooldown: NULL")
+local _axeNameLbl    = AxeTab:AddLabel("Current Axe: Not Found")
+local _axeRangeLbl   = AxeTab:AddLabel("Range: NULL")
+local _axeCdLbl      = AxeTab:AddLabel("Cooldown: NULL")
+-- Bridge to Ancestor:UpdateAxeInfo() which calls :UpdateText() on these globals
+AxeNameLabel     = {UpdateText = function(_, v) _axeNameLbl:Set(v) end}
+AxeRangeLabel    = {UpdateText = function(_, v) _axeRangeLbl:Set(v) end}
+AxeCooldownLabel = {UpdateText = function(_, v) _axeCdLbl:Set(v) end}
+
+-- ─────────────────────────────────────────────────────────────────
+-- DUPE OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local DupeTab = CreateTab("Dupe", "📦")
+
+DupeTab:AddSection("Property Duplication")
+DupeTab:AddLabel("Private server only. Basewipes may rarely occur.")
+local dupePDrop = DupeTab:AddDropdown("Target Player", {Options=GetPlayerNames(), Default=GetPlayerNames()[1]}, function(v)
+    Ancestor.PlayerToDuplicatePropertyTo = Players:FindFirstChild(v) or Ancestor.PlayerToDuplicatePropertyTo
+end)
+local dupeSlotSlider = DupeTab:AddSlider("Slot (1–6)", {Min=1, Max=6, Default=1, Step=1}, function(v)
+    Ancestor.PropertyToDuplicate = v
+end)
+DupeTab:AddButton("Duplicate Property", function()
+    Ancestor:DuplicateProperty(Ancestor.PropertyToDuplicate)
+end)
+
+DupeTab:AddSection("Sign Duplication")
+DupeTab:AddSlider("Sign Amount", {Min=1, Max=99, Default=GUISettings.SignDuplicationAmount, Step=1}, function(v)
+    GUISettings.SignDuplicationAmount = v
+end)
+DupeTab:AddButton("Sell All Signs", function() Ancestor:SellSigns() end)
+
+DupeTab:AddSection("Axe / Tool Dupe")
+DupeTab:AddToggle("Drop Tools After Dupe", {Default=GUISettings.DropToolsAfterInventoryDuplication}, function(v)
+    GUISettings.DropToolsAfterInventoryDuplication = v
+end)
+DupeTab:AddToggle("Instant Drop Axes",    {Default=GUISettings.InstantDropAxes}, function(v)
+    GUISettings.InstantDropAxes = v
+end)
+DupeTab:AddButton("Drop All Axes",        function() Ancestor:DropTools() end)
+DupeTab:AddButton("Safe Suicide (keep axes)", function() Ancestor:SafeSuicide() end)
+
+DupeTab:AddSection("Wood")
+DupeTab:AddButton("Sell All Logs",        function() Ancestor:SellAllLogs() end)
+DupeTab:AddToggle("Sell Plank After Mod", {Default=GUISettings.SellPlankAfterMilling}, function(v)
+    GUISettings.SellPlankAfterMilling = v
+end)
 
 -- ─────────────────────────────────────────────────────────────────
 -- VEHICLE OPTIONS
@@ -5847,7 +5896,12 @@ SettingsTab:AddSection("Misc")
 SettingsTab:AddToggle("Re-Execute On Rejoin", {Default=GUISettings.RejoinExecute}, function(v)
     GUISettings.RejoinExecute = v
 end)
-SettingsTab:AddButton("Rejoin Server", function() Ancestor:Rejoin() end)
+SettingsTab:AddButton("Rejoin Server",  function() Ancestor:Rejoin() end)
+SettingsTab:AddButton("Save Slot Names",function() Ancestor:SaveSlotNames() end)
+SettingsTab:AddButton("Close GUI",      function()
+    Ancestor_Loaded = false
+    pcall(function() ScreenGui:Destroy() end)
+end)
 
 SettingsTab:AddSection("Stats")
 local PingLbl = SettingsTab:AddLabel("Ping: --ms")
