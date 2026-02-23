@@ -75,27 +75,62 @@ local function safeSuicide()
 end
 
 -- ───────────────────────────────────────────────────────
---  DUPE AXE  — the only working sequence
---  1) Unequip   2) Drop each axe (server registers)
---  3) Buffer    4) Die  → axes stay in world + save has them
+--  DUPE AXE  — correct sequence
+--  The KEY insight: after firing 'Drop tool', the server spawns the
+--  dropped axe as a Model inside workspace.PlayerModels.
+--  We MUST wait for that model to actually appear (server confirmation)
+--  before killing. Arbitrary task.wait timers are unreliable — we
+--  watch PlayerModels.ChildAdded for the real signal.
 -- ───────────────────────────────────────────────────────
 local function dupeAxe()
+    local c = char()
     local h = hum()
-    if not h then return notify('No character found!') end
-    local axes = getAxes()
-    if #axes == 0 then return notify('You have no axes to dupe!') end
+    local r = root()
+    if not c or not h or not r then return notify('No character found!') end
 
+    -- Move any equipped axe to backpack first
     h:UnequipTools()
-    task.wait(0.06)
+    task.wait(0.15)
 
-    for _, axe in ipairs(axes) do
-        dropAxe(axe)
-        task.wait(0.12)   -- each drop must register server-side first
+    -- Re-fetch after unequip (now all in backpack)
+    local axes = getAxes()
+    if #axes == 0 then return notify('No axes found in backpack!') end
+
+    local axe = axes[1]  -- dupe one axe at a time for reliability
+    local droppedModel = nil
+
+    -- Listen for the dropped axe appearing in workspace.PlayerModels
+    -- This is the ONLY reliable signal the server has processed the drop
+    local conn
+    conn = workspace.PlayerModels.ChildAdded:Connect(function(model)
+        if model:FindFirstChild('Owner') and model.Owner.Value == Player
+        and model:FindFirstChild('ToolName') then
+            droppedModel = model
+        end
+    end)
+
+    -- Fire the drop remote
+    ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame)
+
+    -- Wait for server confirmation (axe appears in PlayerModels)
+    -- Timeout after 4 seconds
+    local elapsed = 0
+    repeat
+        task.wait(0.05)
+        elapsed += 0.05
+    until droppedModel or elapsed >= 4
+
+    conn:Disconnect()
+
+    if not droppedModel then
+        return notify('Drop failed — equip the axe first and try again.')
     end
 
-    task.wait(0.18)       -- final buffer before death
-    safeSuicide()
-    notify('Dupe done! Pick up your axes after respawn.')
+    -- Axe is confirmed in the world. Save still has it.
+    -- Kill NOW so respawn restores axe from save too.
+    h.Health = 0
+
+    notify('Dupe done! Pick up the axe on the ground after you respawn.')
 end
 
 -- ───────────────────────────────────────────────────────
@@ -632,7 +667,7 @@ end
 local Dp = pages['Dupe']
 
 Section(Dp, 'Dupe Axe')
-Hint(Dp, 'Drops your axes then instantly kills you. The save keeps them so you respawn with duplicated axes. Pick them up after.')
+Hint(Dp, 'Have a save LOADED and your axe in backpack. Script drops the axe, waits for server confirmation, then kills you. Respawn restores axe from save — pick up the dropped one too.')
 Button(Dp, '🪓  Dupe Axe', function()
     dupeAxe()
 end)
