@@ -117,10 +117,18 @@ local function dupeAxe()
         return notify('Axe failed to equip — try again.')
     end
 
-    -- Die with axe equipped → LT2 drops it into world automatically
-    -- Your save has it → respawn gives it back → pick up world axe = dupe
-    h.Health = 0
-    notify('Dupe fired! After respawn, go pick up your axe on the ground.')
+    -- Brief wait so server registers the equipped tool before death
+    task.wait(0.3)
+
+    -- Die with axe equipped → LT2 server drops it into world automatically
+    -- Your save restores the axe on respawn → pick up dropped one = dupe
+    local h2 = c:FindFirstChild('Head')
+    if h2 then
+        h2:Destroy()
+    else
+        h.Health = 0
+    end
+    notify('Dupe fired! After respawn, walk back and pick up the dropped axe.')
 end
 
 -- ───────────────────────────────────────────────────────
@@ -134,22 +142,25 @@ local function applyAxeMod()
     local tool = c:FindFirstChildOfClass('Tool')
     if not tool or not tool:FindFirstChild('ToolName') then return end
 
+    -- Only bother hooking if a mod is actually turned on
+    if not axeModState.rangeOn and not axeModState.noCd then return end
+
     -- Wait up to 3s for connection
     local attempts = 0
     repeat task.wait(0.1); attempts += 1 until getconnections(tool.Activated)[1] or attempts > 30
     local conn = getconnections(tool.Activated)[1]
-    if not conn then return notify('Could not hook axe — try re-equipping.') end
+    if not conn then return end  -- silent — not the user's fault, mods just won't apply
 
-    local fn   = conn.Function
+    local fn    = conn.Function
     local stats = getupvalues(fn)[1]
     if not stats then return end
 
-    local cls = pcall(function()
+    pcall(function()
         local axeClass = require(AxeFolder['AxeClass_'..tostring(tool.ToolName.Value)]).new()
-        stats.Range         = axeModState.rangeOn  and axeModState.rangeVal or axeClass.Range
-        stats.SwingCooldown = axeModState.noCd     and 0                   or axeClass.SwingCooldown
+        stats.Range         = axeModState.rangeOn and axeModState.rangeVal or axeClass.Range
+        stats.SwingCooldown = axeModState.noCd    and 0                   or axeClass.SwingCooldown
+        setupvalue(fn, 1, stats)
     end)
-    setupvalue(fn, 1, stats)
 end
 
 -- Re-apply mod every time an axe is equipped
