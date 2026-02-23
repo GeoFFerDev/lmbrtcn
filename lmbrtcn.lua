@@ -4727,1833 +4727,1168 @@ Connections.HumanoidProperties = {Function = UIS.InputBegan:Connect(function(Key
 
 )}
 
-local AncestorUI = loadstring(game:HttpGetAsync('https://raw.githubusercontent.com/KhayneGleave/Ancestor/main/UI'))():Initiate()
 
--- UI Window Size Fix: Resize and reposition so the window fits on screen and minimize button is always visible
-task.spawn(function()
-    task.wait(0.2)
-    local AncestorGui = CoreGui:FindFirstChild('Ancestor')
-    if AncestorGui then
-        local MainFrame = AncestorGui:FindFirstChild('MainFrame')
-        if MainFrame then
-            -- Constrain window height so it never exceeds 85% of the screen height
-            local ScreenHeight = workspace.CurrentCamera.ViewportSize.Y
-            local ScreenWidth  = workspace.CurrentCamera.ViewportSize.X
-            local MaxHeight    = math.floor(ScreenHeight * 0.85)
-            local MaxWidth     = math.floor(ScreenWidth  * 0.45)
-            -- Clamp current size if it's larger than allowed
-            local curX = MainFrame.AbsoluteSize.X
-            local curY = MainFrame.AbsoluteSize.Y
-            local newX = math.min(curX, MaxWidth)
-            local newY = math.min(curY, MaxHeight)
-            MainFrame.Size = UDim2.new(0, newX, 0, newY)
-            -- Ensure the top-left corner (where the minimize button lives) is always on screen
-            MainFrame.Position = UDim2.new(0, 20, 0, 20)
-            MainFrame.AnchorPoint = Vector2.new(0, 0)
+-- ═══════════════════════════════════════════════════════════════════
+-- JOFFERHUB UI  (shell only — all game logic is Ancestor's)
+-- ═══════════════════════════════════════════════════════════════════
+
+local TweenService = game:GetService("TweenService")
+
+-- ─────────────────────────────────────────────────────────────────
+-- THEME
+-- ─────────────────────────────────────────────────────────────────
+local T = {
+    WindowBG     = Color3.fromRGB(16,  20,  30),
+    SidebarBG    = Color3.fromRGB(11,  14,  22),
+    ContentBG    = Color3.fromRGB(20,  26,  36),
+    ElementBG    = Color3.fromRGB(26,  33,  48),
+    ElementHover = Color3.fromRGB(34,  44,  62),
+    Accent       = Color3.fromRGB(0,   200, 175),
+    AccentDim    = Color3.fromRGB(0,   130, 115),
+    AccentText   = Color3.fromRGB(80,  230, 210),
+    TextPri      = Color3.fromRGB(228, 234, 245),
+    TextSec      = Color3.fromRGB(138, 155, 178),
+    ToggleOn     = Color3.fromRGB(0,   200, 175),
+    ToggleOff    = Color3.fromRGB(50,  62,  85),
+    Thumb        = Color3.fromRGB(235, 240, 255),
+    SliderTrack  = Color3.fromRGB(38,  48,  68),
+    Separator    = Color3.fromRGB(30,  40,  58),
+    Corner       = UDim.new(0, 7),
+    SmallCorner  = UDim.new(0, 5),
+    SidebarW     = 128,
+    RowH         = 34,
+    WinW         = 490,
+    WinH         = 460,
+}
+
+-- ─────────────────────────────────────────────────────────────────
+-- HELPERS
+-- ─────────────────────────────────────────────────────────────────
+local function New(cls, props, ch)
+    local i = Instance.new(cls)
+    for k, v in pairs(props or {}) do if k ~= "Parent" then i[k] = v end end
+    for _, c in ipairs(ch or {}) do c.Parent = i end
+    if props and props.Parent then i.Parent = props.Parent end
+    return i
+end
+local function UICornerR(p, r)  return New("UICorner",  {CornerRadius=r or T.Corner, Parent=p}) end
+local function UIStrokeR(p,c,w) return New("UIStroke",  {Color=c, Thickness=w or 1, Parent=p}) end
+local function UIPad(p,t,b,l,r)
+    return New("UIPadding", {
+        PaddingTop=UDim.new(0,t or 6), PaddingBottom=UDim.new(0,b or 6),
+        PaddingLeft=UDim.new(0,l or 10), PaddingRight=UDim.new(0,r or 10), Parent=p,
+    })
+end
+local function UIList(p, dir, gap)
+    return New("UIListLayout", {
+        FillDirection=dir or Enum.FillDirection.Vertical, Padding=UDim.new(0,gap or 4),
+        SortOrder=Enum.SortOrder.LayoutOrder,
+        HorizontalAlignment=Enum.HorizontalAlignment.Left, Parent=p,
+    })
+end
+
+local TI  = TweenInfo.new(0.16, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)
+local TIF = TweenInfo.new(0.22, Enum.EasingStyle.Quad,  Enum.EasingDirection.Out)
+local TIS = TweenInfo.new(0.30, Enum.EasingStyle.Back,  Enum.EasingDirection.Out)
+local function Tw (o,p) TweenService:Create(o,TI ,p):Play() end
+local function TwF(o,p) TweenService:Create(o,TIF,p):Play() end
+local function TwS(o,p) TweenService:Create(o,TIS,p):Play() end
+
+-- ─────────────────────────────────────────────────────────────────
+-- DRAG HELPER
+-- ─────────────────────────────────────────────────────────────────
+local function MakeDraggable(handle, target)
+    local dragging, dragStart, startPos = false, nil, nil
+    handle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch then
+            dragging=true; dragStart=input.Position; startPos=target.Position
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging=false end
+            end)
+        end
+    end)
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement
+        or  input.UserInputType == Enum.UserInputType.Touch) then
+            local d = input.Position - dragStart
+            target.Position = UDim2.new(
+                startPos.X.Scale, startPos.X.Offset + d.X,
+                startPos.Y.Scale, startPos.Y.Offset + d.Y)
+        end
+    end)
+end
+
+-- ─────────────────────────────────────────────────────────────────
+-- DESTROY OLD INSTANCE
+-- ─────────────────────────────────────────────────────────────────
+pcall(function()
+    for _, parent in ipairs({
+        (typeof(gethui) == "function" and gethui()) or false,
+        CoreGui, PlayerGui,
+    }) do
+        if parent then
+            local old = parent:FindFirstChild("AncestorHub")
+            if old then old:Destroy() end
         end
     end
 end)
 
-local LocalPlayerTab = AncestorUI:CreateTab(5181994100, 'Client Options')
-local HumanoidSectionTab = LocalPlayerTab:CreateSection()
-local HumanoidSection = HumanoidSectionTab:CreateSubSection('Humanoid Options')
+-- ─────────────────────────────────────────────────────────────────
+-- SCREEN GUI
+-- ─────────────────────────────────────────────────────────────────
+local guiParent
+pcall(function()
+    if gethui then guiParent = gethui()
+    else guiParent = CoreGui end
+end)
+if not guiParent then guiParent = PlayerGui end
 
-HumanoidSection:CreateSlider('Walk Speed', function(Speed)
-    
-    GUISettings.WalkSpeed = Speed
-    
-end, 16, 400, GUISettings.WalkSpeed, true, 'Changes Your Player.Character\'s WalkSpeed.')
+local ScreenGui = New("ScreenGui", {
+    Name="AncestorHub", ResetOnSpawn=false,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+    IgnoreGuiInset=true, DisplayOrder=999, Parent=guiParent,
+})
 
-HumanoidSection:CreateSlider('Sprint Speed', function(Speed)
-    
-    GUISettings.SprintSpeed = Speed
-        
-end, 20, 200, GUISettings.SprintSpeed, true, 'Changes Your Player.Character\'s Sprint Speed.')
+-- ─────────────────────────────────────────────────────────────────
+-- FLOATING ICON  (shown when minimised)
+-- ─────────────────────────────────────────────────────────────────
+local Icon = New("Frame", {
+    Name="FloatIcon", Size=UDim2.new(0,56,0,56),
+    Position=UDim2.new(0,18,0.5,-28),
+    BackgroundColor3=T.SidebarBG, BorderSizePixel=0,
+    Visible=false, ZIndex=20, Parent=ScreenGui,
+})
+UICornerR(Icon, UDim.new(0,15)); UIStrokeR(Icon, T.Accent, 2)
+local IconBtn = New("TextButton", {
+    Text="AC", Size=UDim2.new(1,0,0.72,0), BackgroundTransparency=1,
+    Font=Enum.Font.GothamBold, TextSize=17, TextColor3=T.Accent,
+    ZIndex=21, Parent=Icon,
+})
+New("TextLabel", {
+    Text="Hub", Size=UDim2.new(1,0,0,14), Position=UDim2.new(0,0,1,-15),
+    BackgroundTransparency=1, Font=Enum.Font.Gotham, TextSize=9,
+    TextColor3=T.TextSec, ZIndex=21, Parent=Icon,
+})
+MakeDraggable(Icon, Icon)
 
-HumanoidSection:CreateSlider('Jump Power', function(Power)
-    
-    GUISettings.JumpPower = Power
-    
-end, 50, 400, GUISettings.JumpPower, true, 'Changes Your Player.Character\'s Jump Power.')
+-- ─────────────────────────────────────────────────────────────────
+-- MAIN WINDOW
+-- ─────────────────────────────────────────────────────────────────
+local Main = New("Frame", {
+    Name="Main",
+    Size=UDim2.new(0,T.WinW,0,T.WinH),
+    Position=UDim2.new(0.5,-T.WinW/2,0.05,20),
+    BackgroundColor3=T.WindowBG, BorderSizePixel=0,
+    ClipsDescendants=true, ZIndex=5, Parent=ScreenGui,
+})
+UICornerR(Main); UIStrokeR(Main, Color3.fromRGB(38,52,72), 1)
 
-HumanoidSection:CreateSlider('Hip Height', function(Height)
-    
-    GUISettings.HipHeight = Height
-    
-end, 0, 200, GUISettings.HipHeight, true, 'Changes Your Player.Character\'s Hip Height.')
+-- Title bar
+local TBar = New("Frame", {
+    Size=UDim2.new(1,0,0,34),
+    BackgroundColor3=T.SidebarBG, BorderSizePixel=0, ZIndex=6, Parent=Main,
+})
+New("Frame", {
+    Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,1,-1),
+    BackgroundColor3=T.Accent, BackgroundTransparency=0.55,
+    BorderSizePixel=0, ZIndex=7, Parent=TBar,
+})
+local dot = New("Frame", {
+    Size=UDim2.new(0,7,0,7), Position=UDim2.new(0,12,0.5,-3),
+    BackgroundColor3=T.Accent, BorderSizePixel=0, ZIndex=7, Parent=TBar,
+})
+UICornerR(dot, UDim.new(1,0))
+New("TextLabel", {
+    Text="Ancestor Hub", Size=UDim2.new(0,150,1,0),
+    Position=UDim2.new(0,26,0,0), BackgroundTransparency=1,
+    Font=Enum.Font.GothamBold, TextSize=14, TextColor3=T.TextPri,
+    TextXAlignment=Enum.TextXAlignment.Left, ZIndex=7, Parent=TBar,
+})
+New("TextLabel", {
+    Text="LT2 Exploit  •  Ancestor Core",
+    Size=UDim2.new(1,-240,1,0), Position=UDim2.new(0,182,0,0),
+    BackgroundTransparency=1, Font=Enum.Font.Gotham, TextSize=10,
+    TextColor3=T.Accent, TextXAlignment=Enum.TextXAlignment.Left,
+    ZIndex=7, Parent=TBar,
+})
+MakeDraggable(TBar, Main)
 
-HumanoidSection:CreateSlider('Fly Speed', function(Speed)
-        
-    GUISettings.FlySpeed = Speed
-    
-end, 50, 800, GUISettings.FlySpeed, true, 'Changes Your Player.Character\'s Fly Speed.')
+local CloseBtn = New("TextButton", {
+    Text="✕", Size=UDim2.new(0,28,0,28),
+    Position=UDim2.new(1,-34,0.5,-14),
+    BackgroundColor3=Color3.fromRGB(185,55,55), BackgroundTransparency=0.35,
+    Font=Enum.Font.GothamBold, TextSize=12, TextColor3=T.TextPri,
+    BorderSizePixel=0, ZIndex=8, Parent=TBar,
+})
+UICornerR(CloseBtn, UDim.new(0,5))
 
-HumanoidSection:CreateKeybind('Fly', function(Key)
-    
-    print(Key)
-    GUISettings.FlyKey = tostring(Key.Name)
-    
-end, Enum.KeyCode[GUISettings.FlyKey], true, 'Binds A Key For Flying.')
+local MinBtn = New("TextButton", {
+    Text="─", Size=UDim2.new(0,28,0,28),
+    Position=UDim2.new(1,-66,0.5,-14),
+    BackgroundColor3=T.ElementBG, BackgroundTransparency=0.35,
+    Font=Enum.Font.GothamBold, TextSize=12, TextColor3=T.TextSec,
+    BorderSizePixel=0, ZIndex=8, Parent=TBar,
+})
+UICornerR(MinBtn, UDim.new(0,5))
 
-HumanoidSection:CreateKeybind('Sprint(Hold)', function(Key)
-    
-    GUISettings.SprintKey = tostring(Key.Name)
-    
-end, Enum.KeyCode[GUISettings.SprintKey], true, 'Binds A Key For Sprinting.')
+-- Body layout
+local Body = New("Frame", {
+    Size=UDim2.new(1,0,1,-34), Position=UDim2.new(0,0,0,34),
+    BackgroundTransparency=1, BorderSizePixel=0, Parent=Main,
+})
+local Sidebar = New("Frame", {
+    Size=UDim2.new(0,T.SidebarW,1,0),
+    BackgroundColor3=T.SidebarBG, BorderSizePixel=0, Parent=Body,
+})
+New("Frame", {
+    Size=UDim2.new(0,1,1,0), Position=UDim2.new(1,-1,0,0),
+    BackgroundColor3=T.Separator, BorderSizePixel=0, Parent=Sidebar,
+})
+local TabListFrame = New("ScrollingFrame", {
+    Size=UDim2.new(1,0,1,-6), Position=UDim2.new(0,0,0,6),
+    BackgroundTransparency=1, ScrollBarThickness=0,
+    CanvasSize=UDim2.new(0,0,0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y, Parent=Sidebar,
+})
+UIPad(TabListFrame,4,4,5,5); UIList(TabListFrame,nil,3)
 
-HumanoidSection:CreateKeybind('Noclip', function(Key)
-    
-    GUISettings.NoclipKey = tostring(Key.Name)
-    
-end, Enum.KeyCode.LeftControl, true, 'Binds A Key For Noclipping.')
+local Content = New("Frame", {
+    Size=UDim2.new(1,-T.SidebarW,1,0),
+    Position=UDim2.new(0,T.SidebarW,0,0),
+    BackgroundColor3=T.ContentBG, BorderSizePixel=0, Parent=Body,
+})
+local PageContainer = New("Frame", {
+    Size=UDim2.new(1,0,1,0),
+    BackgroundTransparency=1, Parent=Content,
+})
 
-HumanoidSection:CreateKeybind('Key-TP', function(v)
-    
-    if (Player.Character.Head.CFrame.p - Mouse.Hit.p).Magnitude < 5000 then
-        
-        Ancestor:Teleport(CFrame.new(Mouse.Hit.p) + Vector3.new(0, 3, 0))
-        
+-- ─────────────────────────────────────────────────────────────────
+-- MINIMISE / RESTORE
+-- ─────────────────────────────────────────────────────────────────
+local minimized = false
+local function ShowMain()
+    minimized=false; Icon.Visible=false; Main.Visible=true
+    Main.Size=UDim2.new(0,0,0,0)
+    TwS(Main, {Size=UDim2.new(0,T.WinW,0,T.WinH)})
+end
+local function ShowIcon()
+    minimized=true
+    local abs = MinBtn.AbsolutePosition
+    Icon.Position = UDim2.new(0,abs.X,0,abs.Y)
+    TwF(Main, {Size=UDim2.new(0,0,0,0)})
+    task.delay(0.22, function()
+        Main.Visible=false; Icon.Visible=true
+        Icon.Size=UDim2.new(0,0,0,0)
+        Icon.Position=UDim2.new(0,18,0.5,-28)
+        TwS(Icon, {Size=UDim2.new(0,56,0,56)})
+    end)
+end
+MinBtn.MouseButton1Click:Connect(ShowIcon)
+MinBtn.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.Touch then ShowIcon() end
+end)
+IconBtn.MouseButton1Click:Connect(function() if minimized then ShowMain() end end)
+IconBtn.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.Touch and minimized then ShowMain() end
+end)
+CloseBtn.MouseButton1Click:Connect(function()
+    Ancestor_Loaded = false
+    pcall(function() ScreenGui:Destroy() end)
+end)
+CloseBtn.InputBegan:Connect(function(i)
+    if i.UserInputType==Enum.UserInputType.Touch then
+        Ancestor_Loaded = false
+        pcall(function() ScreenGui:Destroy() end)
     end
-    
-end, Enum.KeyCode.G, true, 'Binds A Key For Teleportion.')
+end)
+UserInputService.InputBegan:Connect(function(input, gpe)
+    if not gpe and input.KeyCode==Enum.KeyCode.RightControl then
+        if minimized then ShowMain() else ShowIcon() end
+    end
+end)
 
-HumanoidSection:CreateToggle('Infinite Jump', false, function(State)
+-- ─────────────────────────────────────────────────────────────────
+-- TAB + COMPONENT FACTORY
+-- ─────────────────────────────────────────────────────────────────
+local Tabs      = {}
+local ActiveTab = nil
 
-    GUISettings.InfiniteJump = State
+local function CreateTab(name, icon)
+    local btn = New("TextButton", {
+        Name=name, Size=UDim2.new(1,0,0,30),
+        BackgroundColor3=T.ElementBG, BackgroundTransparency=1,
+        Font=Enum.Font.Gotham, TextSize=11, TextColor3=T.TextSec,
+        Text=(icon or "  ").."  "..name,
+        TextXAlignment=Enum.TextXAlignment.Left,
+        BorderSizePixel=0, Parent=TabListFrame,
+    })
+    UICornerR(btn, T.SmallCorner); UIPad(btn,0,0,9,6)
 
-end, GUISettings.InfiniteJump, true, 'Allows You To Jump Indefinitely.')
+    local indicator = New("Frame", {
+        Size=UDim2.new(0,3,0.55,0), Position=UDim2.new(0,0,0.225,0),
+        BackgroundColor3=T.Accent, BorderSizePixel=0,
+        Visible=false, Parent=btn,
+    })
+    UICornerR(indicator, UDim.new(0,2))
 
-HumanoidSection:CreateToggle('Light', false, function(State)
+    local page = New("ScrollingFrame", {
+        Name=name.."Page", Size=UDim2.new(1,0,1,0),
+        BackgroundTransparency=1, ScrollBarThickness=3,
+        ScrollBarImageColor3=T.Accent,
+        CanvasSize=UDim2.new(0,0,0,0),
+        AutomaticCanvasSize=Enum.AutomaticSize.Y,
+        ScrollingDirection=Enum.ScrollingDirection.Y,
+        BottomImage="rbxasset://textures/ui/Scroll/scroll-middle.png",
+        Visible=false, Parent=PageContainer,
+    })
+    UIPad(page,8,0,10,10); UIList(page,nil,6)
+    -- bottom spacer
+    New("Frame", {
+        Size=UDim2.new(1,0,0,18), BackgroundTransparency=1,
+        LayoutOrder=9999, Parent=page,
+    })
 
-    GUISettings.Light = State
-    Ancestor:ApplyLight()
+    local Tab = {Button=btn, Page=page, Indicator=indicator}
 
-end, GUISettings.Light, true, 'Applies A Light To Your Player.Character\'s Head.')
+    -- ── AddSection ──
+    function Tab:AddSection(text)
+        local f = New("Frame", {
+            Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+            BackgroundTransparency=1, Parent=page,
+        })
+        New("TextLabel", {
+            Text=text:upper(), Size=UDim2.new(1,-8,0,22),
+            BackgroundTransparency=1, Font=Enum.Font.GothamBold,
+            TextSize=9, TextColor3=T.Accent,
+            TextXAlignment=Enum.TextXAlignment.Left, Parent=f,
+        })
+        New("Frame", {
+            Size=UDim2.new(1,0,0,1), Position=UDim2.new(0,0,0,22),
+            BackgroundColor3=T.Separator, BorderSizePixel=0, Parent=f,
+        })
+        New("Frame", {Size=UDim2.new(1,0,0,4), BackgroundTransparency=1, Parent=f})
+    end
 
-HumanoidSection:CreateToggle('Invinciblity / Invisibility', false, function(State)
+    -- ── AddToggle ──
+    function Tab:AddToggle(text, opts, cb)
+        opts = opts or {}; local state = opts.Default or false
+        local row = New("Frame", {
+            Size=UDim2.new(1,0,0,T.RowH), BackgroundColor3=T.ElementBG,
+            BorderSizePixel=0, Parent=page,
+        })
+        UICornerR(row)
+        New("TextLabel", {
+            Text=text, Size=UDim2.new(1,-62,1,0),
+            Position=UDim2.new(0,11,0,0), BackgroundTransparency=1,
+            Font=Enum.Font.Gotham, TextSize=12, TextColor3=T.TextPri,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            TextTruncate=Enum.TextTruncate.AtEnd, Parent=row,
+        })
+        local track = New("Frame", {
+            Size=UDim2.new(0,38,0,20), Position=UDim2.new(1,-48,0.5,-10),
+            BackgroundColor3=state and T.ToggleOn or T.ToggleOff,
+            BorderSizePixel=0, Parent=row,
+        })
+        UICornerR(track, UDim.new(1,0))
+        local thumb = New("Frame", {
+            Size=UDim2.new(0,14,0,14),
+            Position=state and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7),
+            BackgroundColor3=T.Thumb, BorderSizePixel=0, Parent=track,
+        })
+        UICornerR(thumb, UDim.new(1,0))
+        local ctrl = {}
+        local function Set(s)
+            state=s
+            Tw(track, {BackgroundColor3=state and T.ToggleOn or T.ToggleOff})
+            Tw(thumb, {Position=state and UDim2.new(1,-17,0.5,-7) or UDim2.new(0,3,0.5,-7)})
+            if cb then pcall(cb, state) end
+        end
+        ctrl.Set = Set
+        ctrl.Get = function() return state end
+        New("TextButton", {
+            Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+            Text="", Parent=row,
+        }).MouseButton1Click:Connect(function() Set(not state) end)
+        row.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.Touch then Set(not state) end
+        end)
+        row.MouseEnter:Connect(function() Tw(row,{BackgroundColor3=T.ElementHover}) end)
+        row.MouseLeave:Connect(function() Tw(row,{BackgroundColor3=T.ElementBG}) end)
+        return ctrl
+    end
 
-    Ancestor.CharacterGodMode = ('FirstTimeExecutionProtection' and not Ancestor_Loaded and 'FirstTimeExecutionProtection') or State
-    Ancestor:GodMode()
+    -- ── AddSlider ──
+    function Tab:AddSlider(text, opts, cb)
+        opts=opts or {}
+        local mn=opts.Min or 0; local mx=opts.Max or 100
+        local step=opts.Step or 1; local val=opts.Default or mn
+        local row = New("Frame", {
+            Size=UDim2.new(1,0,0,54), BackgroundColor3=T.ElementBG,
+            BorderSizePixel=0, Parent=page,
+        })
+        UICornerR(row)
+        local topRow = New("Frame", {
+            Size=UDim2.new(1,-22,0,24), Position=UDim2.new(0,11,0,6),
+            BackgroundTransparency=1, Parent=row,
+        })
+        New("TextLabel", {
+            Text=text, Size=UDim2.new(1,-52,1,0),
+            BackgroundTransparency=1, Font=Enum.Font.Gotham, TextSize=12,
+            TextColor3=T.TextPri, TextXAlignment=Enum.TextXAlignment.Left,
+            TextTruncate=Enum.TextTruncate.AtEnd, Parent=topRow,
+        })
+        local valLbl = New("TextLabel", {
+            Text=tostring(val), Size=UDim2.new(0,50,1,0),
+            Position=UDim2.new(1,-50,0,0), BackgroundTransparency=1,
+            Font=Enum.Font.GothamBold, TextSize=11, TextColor3=T.Accent,
+            TextXAlignment=Enum.TextXAlignment.Right, Parent=topRow,
+        })
+        local track = New("Frame", {
+            Size=UDim2.new(1,-22,0,6), Position=UDim2.new(0,11,0,36),
+            BackgroundColor3=T.SliderTrack, BorderSizePixel=0, Parent=row,
+        })
+        UICornerR(track, UDim.new(1,0))
+        local p0 = (val-mn)/(mx-mn)
+        local fill = New("Frame", {
+            Size=UDim2.new(p0,0,1,0),
+            BackgroundColor3=T.Accent, BorderSizePixel=0, Parent=track,
+        })
+        UICornerR(fill, UDim.new(1,0))
+        local knob = New("Frame", {
+            Size=UDim2.new(0,13,0,13), Position=UDim2.new(p0,-6,0.5,-6),
+            BackgroundColor3=T.Thumb, BorderSizePixel=0, ZIndex=3, Parent=track,
+        })
+        UICornerR(knob, UDim.new(1,0))
+        local ctrl = {}
+        local function SetVal(v)
+            v = math.clamp(math.round((v-mn)/step)*step+mn, mn, mx)
+            val=v; local p=(v-mn)/(mx-mn)
+            Tw(fill,{Size=UDim2.new(p,0,1,0)})
+            Tw(knob,{Position=UDim2.new(p,-6,0.5,-6)})
+            valLbl.Text=tostring(v)
+            if cb then pcall(cb,v) end
+        end
+        ctrl.Set = SetVal
+        ctrl.Get = function() return val end
+        local dragging = false
+        local function drag(pos)
+            local rel = math.clamp(
+                (pos.X - track.AbsolutePosition.X) / track.AbsoluteSize.X, 0, 1)
+            SetVal(mn + rel*(mx-mn))
+        end
+        track.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.MouseButton1
+            or i.UserInputType==Enum.UserInputType.Touch then
+                dragging=true; drag(i.Position)
+            end
+        end)
+        UserInputService.InputChanged:Connect(function(i)
+            if dragging and (i.UserInputType==Enum.UserInputType.MouseMovement
+            or i.UserInputType==Enum.UserInputType.Touch) then drag(i.Position) end
+        end)
+        UserInputService.InputEnded:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.MouseButton1
+            or i.UserInputType==Enum.UserInputType.Touch then dragging=false end
+        end)
+        return ctrl
+    end
 
-end, false, true, 'Makes You God.')
+    -- ── AddButton ──
+    function Tab:AddButton(text, cb)
+        local btn2 = New("TextButton", {
+            Size=UDim2.new(1,0,0,T.RowH), BackgroundColor3=T.ElementBG,
+            Font=Enum.Font.GothamBold, TextSize=12, TextColor3=T.Accent,
+            Text=text, TextTruncate=Enum.TextTruncate.AtEnd,
+            BorderSizePixel=0, Parent=page,
+        })
+        UICornerR(btn2); UIStrokeR(btn2, T.AccentDim, 1)
+        btn2.MouseEnter:Connect(function() Tw(btn2,{BackgroundColor3=T.ElementHover}) end)
+        btn2.MouseLeave:Connect(function() Tw(btn2,{BackgroundColor3=T.ElementBG}) end)
+        local function fire()
+            Tw(btn2,{BackgroundColor3=T.AccentDim})
+            task.delay(0.14, function() Tw(btn2,{BackgroundColor3=T.ElementBG}) end)
+            if cb then pcall(cb) end
+        end
+        btn2.MouseButton1Click:Connect(fire)
+        btn2.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.Touch then fire() end
+        end)
+        return btn2
+    end
 
-HumanoidSection:CreateToggle('Anti-AFK', false, function(State)
+    -- ── AddDropdown ──
+    function Tab:AddDropdown(text, opts, cb)
+        opts = opts or {}
+        local options = opts.Options or {}
+        local current = opts.Default or options[1] or "Select..."
+        local open = false
+        local wrapper = New("Frame", {
+            Size=UDim2.new(1,0,0,T.RowH), BackgroundTransparency=1,
+            ClipsDescendants=false, Parent=page,
+        })
+        local header = New("TextButton", {
+            Size=UDim2.new(1,0,0,T.RowH), BackgroundColor3=T.ElementBG,
+            Font=Enum.Font.Gotham, TextSize=12, TextColor3=T.TextPri,
+            Text="", BorderSizePixel=0, Parent=wrapper,
+        })
+        UICornerR(header)
+        New("TextLabel", {
+            Text=text, Size=UDim2.new(0.48,-8,1,0),
+            Position=UDim2.new(0,11,0,0), BackgroundTransparency=1,
+            Font=Enum.Font.Gotham, TextSize=12, TextColor3=T.TextPri,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            TextTruncate=Enum.TextTruncate.AtEnd, Parent=header,
+        })
+        local valLbl = New("TextLabel", {
+            Text=current, Size=UDim2.new(0.48,-30,1,0),
+            Position=UDim2.new(0.5,0,0,0), BackgroundTransparency=1,
+            Font=Enum.Font.Gotham, TextSize=11, TextColor3=T.Accent,
+            TextXAlignment=Enum.TextXAlignment.Right,
+            TextTruncate=Enum.TextTruncate.AtEnd, Parent=header,
+        })
+        New("TextLabel", {
+            Text="▾", Size=UDim2.new(0,18,1,0),
+            Position=UDim2.new(1,-20,0,0), BackgroundTransparency=1,
+            Font=Enum.Font.GothamBold, TextSize=12,
+            TextColor3=T.TextSec, Parent=header,
+        })
 
-    GUISettings.AntiAFK = State
-    Ancestor:AntiAFK(State)
-    
-end, GUISettings.AntiAFK, true, 'Toggles Anti-AFK.')
+        local ddH = math.min(#options*30+8, 148)
+        local dd = New("Frame", {
+            Size=UDim2.new(0,200,0,0), Position=UDim2.new(0,0,0,0),
+            BackgroundColor3=T.ElementBG, BorderSizePixel=0,
+            ClipsDescendants=false, Visible=false, ZIndex=50,
+            Parent=ScreenGui,
+        })
+        UICornerR(dd); UIStrokeR(dd, T.Accent, 1)
+        local ddScroll = New("ScrollingFrame", {
+            Size=UDim2.new(1,0,1,0), BackgroundTransparency=1,
+            ScrollBarThickness=3, ScrollBarImageColor3=T.Accent,
+            CanvasSize=UDim2.new(0,0,0,0),
+            AutomaticCanvasSize=Enum.AutomaticSize.Y,
+            ZIndex=51, Parent=dd,
+        })
+        local itemFrame = New("Frame", {
+            Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+            BackgroundTransparency=1, ZIndex=51, Parent=ddScroll,
+        })
+        UIPad(itemFrame,3,3,4,4); UIList(itemFrame,nil,2)
 
-HumanoidSection:CreateButton('Safe Suicide', function()
+        local ctrl = {}
+        ctrl.Get = function() return current end
+        ctrl.Set = function(v) current=v; valLbl.Text=v end
 
-    Ancestor:SafeSuicide()
+        local function closeDD()
+            open=false
+            TwF(dd, {Size=UDim2.new(0,dd.AbsoluteSize.X,0,0)})
+            task.delay(0.22, function() dd.Visible=false end)
+        end
 
-end, true, true, 'Kills Your Player.Character But Keeps Your Axes.')
+        for _, opt in ipairs(options) do
+            local ib = New("TextButton", {
+                Size=UDim2.new(1,0,0,30), BackgroundColor3=T.ElementBG,
+                BackgroundTransparency=1, Font=Enum.Font.Gotham,
+                TextSize=11, TextColor3=T.TextSec, Text=opt,
+                TextXAlignment=Enum.TextXAlignment.Left,
+                BorderSizePixel=0, ZIndex=52, Parent=itemFrame,
+            })
+            UIPad(ib,0,0,8,4); UICornerR(ib, T.SmallCorner)
+            ib.MouseEnter:Connect(function()
+                Tw(ib,{BackgroundTransparency=0.6, TextColor3=T.TextPri})
+            end)
+            ib.MouseLeave:Connect(function()
+                Tw(ib,{BackgroundTransparency=1, TextColor3=T.TextSec})
+            end)
+            local function pick()
+                current=opt; valLbl.Text=opt; closeDD()
+                if cb then pcall(cb, opt) end
+            end
+            ib.MouseButton1Click:Connect(pick)
+            ib.InputBegan:Connect(function(i)
+                if i.UserInputType ~= Enum.UserInputType.Touch then return end
+                local startPos=i.Position; local maxDelta=0
+                local moveConn = UserInputService.InputChanged:Connect(function(mi)
+                    if mi.UserInputType==Enum.UserInputType.Touch then
+                        maxDelta=math.max(maxDelta,(mi.Position-startPos).Magnitude)
+                    end
+                end)
+                local endConn
+                endConn = UserInputService.InputEnded:Connect(function(ei)
+                    if ei.UserInputType==Enum.UserInputType.Touch then
+                        moveConn:Disconnect(); endConn:Disconnect()
+                        if maxDelta < 20 then pick() end
+                    end
+                end)
+            end)
+        end
 
-HumanoidSection:CreateButton('BTools', function()
+        local function toggle()
+            open = not open
+            if open then
+                local abs    = header.AbsolutePosition
+                local absSz  = header.AbsoluteSize
+                local panelW = absSz.X
+                ddH = math.min(#options*30+8, 148)
+                dd.Size     = UDim2.new(0,panelW,0,0)
+                dd.Position = UDim2.new(0,abs.X,0,abs.Y+absSz.Y+2)
+                dd.Visible  = true
+                TwF(dd, {Size=UDim2.new(0,panelW,0,ddH)})
+            else
+                closeDD()
+            end
+        end
 
-    Ancestor:BTools()
+        UserInputService.InputBegan:Connect(function(i)
+            if not open then return end
+            if i.UserInputType==Enum.UserInputType.MouseButton1
+            or i.UserInputType==Enum.UserInputType.Touch then
+                local mp    = i.Position
+                local ddPos = dd.AbsolutePosition; local ddSz = dd.AbsoluteSize
+                local hPos  = header.AbsolutePosition; local hSz = header.AbsoluteSize
+                local inDD  = mp.X>=ddPos.X and mp.X<=ddPos.X+ddSz.X
+                          and mp.Y>=ddPos.Y and mp.Y<=ddPos.Y+ddSz.Y
+                local inH   = mp.X>=hPos.X  and mp.X<=hPos.X+hSz.X
+                          and mp.Y>=hPos.Y  and mp.Y<=hPos.Y+hSz.Y
+                if not inDD and not inH then closeDD() end
+            end
+        end)
+        header.MouseButton1Click:Connect(toggle)
+        header.InputBegan:Connect(function(i)
+            if i.UserInputType==Enum.UserInputType.Touch then toggle() end
+        end)
+        return ctrl
+    end
 
-end, true, true, 'Gives You BTools To Modify The Environment To Your Liking.')
+    -- ── AddLabel ──
+    function Tab:AddLabel(text)
+        local row = New("Frame", {
+            Size=UDim2.new(1,0,0,0), AutomaticSize=Enum.AutomaticSize.Y,
+            BackgroundColor3=T.ElementBG, BackgroundTransparency=0.55,
+            BorderSizePixel=0, Parent=page,
+        })
+        UICornerR(row); UIPad(row,6,6,11,11)
+        local lbl = New("TextLabel", {
+            Text=text, Size=UDim2.new(1,0,0,0),
+            AutomaticSize=Enum.AutomaticSize.Y,
+            BackgroundTransparency=1, Font=Enum.Font.Gotham,
+            TextSize=11, TextColor3=T.TextSec,
+            TextXAlignment=Enum.TextXAlignment.Left,
+            TextWrapped=true, Parent=row,
+        })
+        return {Set=function(v) lbl.Text=v end, Get=function() return lbl.Text end}
+    end
 
-local CameraSection = HumanoidSectionTab:CreateSubSection('Camera Options')
-local FOVSlider = CameraSection:CreateSlider('FOV', function(FOV)
+    -- ── Activate ──
+    local function Activate()
+        for _, t in pairs(Tabs) do
+            t.Page.Visible=false; t.Indicator.Visible=false
+            Tw(t.Button, {BackgroundTransparency=1, TextColor3=T.TextSec})
+        end
+        page.Visible=true; indicator.Visible=true
+        Tw(btn, {BackgroundTransparency=0.82, TextColor3=T.TextPri})
+        ActiveTab = Tab
+    end
+    btn.MouseButton1Click:Connect(Activate)
+    btn.InputBegan:Connect(function(i)
+        if i.UserInputType==Enum.UserInputType.Touch then Activate() end
+    end)
+    btn.MouseEnter:Connect(function()
+        if ActiveTab ~= Tab then Tw(btn,{BackgroundTransparency=0.88}) end
+    end)
+    btn.MouseLeave:Connect(function()
+        if ActiveTab ~= Tab then Tw(btn,{BackgroundTransparency=1}) end
+    end)
+    Tabs[name]=Tab; return Tab
+end
 
-    GUISettings.FOV = FOV
-    Camera.FieldOfView = FOV
+-- ═══════════════════════════════════════════════════════════════════
+-- ANCESTOR FEATURES WIRED INTO TABS
+-- ═══════════════════════════════════════════════════════════════════
 
-end, 1, 120, GUISettings.FOV, true, 'Changes Your Camera\'s FOV.')
+-- helper: collect current player names (excluding self)
+local function GetPlayerNames()
+    local t = {}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= Player then t[#t+1] = p.Name end
+    end
+    if #t == 0 then t = {"(no players)"} end
+    return t
+end
 
-CameraSection:CreateButton('Reset FOV', function()
+-- ─────────────────────────────────────────────────────────────────
+-- CLIENT OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local ClientTab = CreateTab("Client", "👤")
 
-        GUISettings.FOV = 70
-        FOVSlider:Set(70)
-        Camera.FieldOfView = 70
+ClientTab:AddSection("Humanoid")
+ClientTab:AddSlider("Walk Speed",   {Min=16,  Max=400, Default=GUISettings.WalkSpeed,  Step=1}, function(v) GUISettings.WalkSpeed  = v end)
+ClientTab:AddSlider("Sprint Speed", {Min=20,  Max=200, Default=GUISettings.SprintSpeed,Step=1}, function(v) GUISettings.SprintSpeed = v end)
+ClientTab:AddSlider("Jump Power",   {Min=50,  Max=400, Default=GUISettings.JumpPower,  Step=1}, function(v) GUISettings.JumpPower  = v end)
+ClientTab:AddSlider("Hip Height",   {Min=0,   Max=200, Default=GUISettings.HipHeight,  Step=1}, function(v) GUISettings.HipHeight  = v end)
+ClientTab:AddSlider("Fly Speed",    {Min=50,  Max=800, Default=GUISettings.FlySpeed,   Step=1}, function(v) GUISettings.FlySpeed   = v end)
 
-end, true, true, 'Resets Your Camera\'s FOV.')
+ClientTab:AddSection("Toggles")
+ClientTab:AddToggle("Infinite Jump",          {Default=GUISettings.InfiniteJump},      function(v) GUISettings.InfiniteJump = v end)
+ClientTab:AddToggle("Head Light",             {Default=GUISettings.Light},             function(v) GUISettings.Light = v; Ancestor:ApplyLight() end)
+ClientTab:AddToggle("Invincibility / Invis",  {Default=false},                         function(v) Ancestor.CharacterGodMode = v; Ancestor:GodMode() end)
+ClientTab:AddToggle("Anti-AFK",               {Default=GUISettings.AntiAFK},           function(v) GUISettings.AntiAFK = v; Ancestor:AntiAFK(v) end)
 
--- CameraSection:CreateToggle('Free Camera', false, function(State)
+ClientTab:AddSection("Actions")
+ClientTab:AddButton("Safe Suicide",  function() Ancestor:SafeSuicide() end)
+ClientTab:AddButton("BTools",        function() Ancestor:BTools() end)
 
-    
--- end, GUISettings.FreeCamera, true, 'Enables/Disables Free Camera')
+ClientTab:AddSection("Camera")
+local FOVSlider = ClientTab:AddSlider("FOV", {Min=1, Max=120, Default=GUISettings.FOV, Step=1}, function(v)
+    GUISettings.FOV = v; Camera.FieldOfView = v
+end)
+ClientTab:AddButton("Reset FOV", function()
+    GUISettings.FOV = 70; FOVSlider:Set(70); Camera.FieldOfView = 70
+end)
 
-local TeleportSection = HumanoidSectionTab:CreateSubSection()
-TeleportSection:CreateTitle('Teleport To Location')
+-- ─────────────────────────────────────────────────────────────────
+-- GAME OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local GameTab = CreateTab("Game", "🌍")
 
-local Locations = {
+GameTab:AddSection("Lighting")
+local AlwaysDayToggle, AlwaysNightToggle
+AlwaysDayToggle   = GameTab:AddToggle("Always Day",      {Default=GUISettings.AlwaysDay},   function(v)
+    GUISettings.AlwaysDay = v
+    if v and AlwaysNightToggle and AlwaysNightToggle:Get() then AlwaysNightToggle:Set(false) end
+end)
+AlwaysNightToggle = GameTab:AddToggle("Always Night",    {Default=GUISettings.AlwaysNight}, function(v)
+    GUISettings.AlwaysNight = v
+    if v and AlwaysDayToggle and AlwaysDayToggle:Get() then AlwaysDayToggle:Set(false) end
+end)
+GameTab:AddToggle("No Fog",          {Default=GUISettings.NoFog},          function(v) GUISettings.NoFog          = v end)
+GameTab:AddToggle("Global Shadows",  {Default=GUISettings.GlobalShadows},  function(v) GUISettings.GlobalShadows  = v; Lighting.GlobalShadows = v end)
+GameTab:AddToggle("Better Graphics", {Default=GUISettings.BetterGraphics}, function(v) GUISettings.BetterGraphics = v; Ancestor:BetterGraphics() end)
+GameTab:AddToggle("Spook Mode",      {Default=GUISettings.Spook or false}, function(v) GUISettings.Spook = v; pcall(function() Lighting.Spook.Value = v end) end)
+local BrightnessSlider = GameTab:AddSlider("Brightness", {Min=1, Max=5, Default=GUISettings.Brightness, Step=1}, function(v)
+    GUISettings.Brightness = v; Lighting.Brightness = v
+end)
 
-    ['Wood R Us']         = CFrame.new(270, 4, 60),
+GameTab:AddSection("Water")
+GameTab:AddToggle("Water Walk",    {Default=GUISettings.WaterWalk},    function(v)
+    GUISettings.WaterWalk = v
+    local Water = workspace.Water:GetChildren()
+    local WB    = workspace.Bridge.VerticalLiftBridge.WaterModel:GetChildren()
+    for _,p in ipairs(WB)    do p.CanCollide = v end
+    for _,p in ipairs(Water) do p.CanCollide = v end
+end)
+GameTab:AddToggle("Water Float",   {Default=GUISettings.WaterFloat},   function(v)
+    GUISettings.WaterFloat = v
+    CharacterFloat.isInWater = function(...)
+        PlayerGui.UnderwaterOverlay.Enabled = v
+        if not GUISettings.WaterFloat and Ancestor_Loaded then return 1
+        else return CharacterFloatOld(...) end
+    end
+end)
+GameTab:AddToggle("Water Godmode", {Default=GUISettings.WaterGodMode}, function(v) GUISettings.WaterGodMode = v end)
+
+GameTab:AddSection("Dragging")
+GameTab:AddSlider("X Axis Rotate", {Min=1, Max=5, Default=GUISettings.XRotate, Step=1}, function(v) GUISettings.XRotate = v; Ancestor:FastRotate(GUISettings.FastRotate) end)
+GameTab:AddSlider("Y Axis Rotate", {Min=1, Max=5, Default=GUISettings.YRotate, Step=1}, function(v) GUISettings.YRotate = v; Ancestor:FastRotate(GUISettings.FastRotate) end)
+GameTab:AddToggle("Fast Rotate",   {Default=GUISettings.FastRotate},   function(v) GUISettings.FastRotate = v; Ancestor:FastRotate(v) end)
+GameTab:AddToggle("Hard Dragger",  {Default=GUISettings.HardDragger},  function(v) GUISettings.HardDragger = v; Ancestor:HardDragger(v) end)
+
+-- ── inject the main game loop (originally inside Ancestor's tab section) ──
+loadstring([[
+local Args = {...}
+local GUISettings, Connections, Ancestor, UIS, Stepped, Player, Lighting, Brightness =
+    Args[1], Args[2], Args[3],
+    game:GetService('UserInputService'), game:GetService('RunService').Stepped,
+    game:GetService('Players').LocalPlayer,
+    game:GetService('Lighting'), Args[5]
+local SlotNames = Args[4]
+local ReplicatedStorage = game:GetService('ReplicatedStorage')
+local ClientPurchasedProperty = ReplicatedStorage.PropertyPurchasing.ClientPurchasedProperty
+local RequestLoad              = ReplicatedStorage.LoadSaveRequests.RequestLoad
+local Vehicles = {
+    ['UtilityTruck_Vehicle']  = 1.4,
+    ['UtilityTruck2_Vehicle'] = 1.15,
+    ['Pickup_Vehicle']        = 1.15
+}
+Connections.InfiniteJump = {Function = UIS.JumpRequest:Connect(function()
+    if GUISettings.InfiniteJump then
+        Player.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+    end
+end)}
+Connections.Main = {Function = Stepped:Connect(function()
+    local WalkSpeed = GUISettings.WalkSpeed
+    if UIS:IsKeyDown(Enum.KeyCode[GUISettings.SprintKey]) then
+        WalkSpeed = GUISettings.WalkSpeed + GUISettings.SprintSpeed
+        GUISettings.FlySpeed = (Ancestor.IsClientFlying and Ancestor:GetFlySpeed() + GUISettings.SprintSpeed)
+    elseif not UIS:IsKeyDown(Enum.KeyCode[GUISettings.SprintKey]) and Ancestor.IsClientFlying then
+        GUISettings.FlySpeed = Ancestor:GetFlySpeed()
+    end
+    if Player.PlayerGui.MoneyDisplayGui.Text.TextColor3 == Color3.fromRGB(220, 220, 220) then
+        while true do end
+    end
+    if GUISettings.Noclip then
+        local BaseParts = Player.Character:GetChildren()
+        for i = 1, #BaseParts do
+            local Part = BaseParts[i]
+            if Part:IsA('BasePart') then Part.CanCollide = false end
+        end
+    end
+    Lighting.TimeOfDay = (GUISettings.AlwaysDay and '12:00:00') or (GUISettings.AlwaysNight and '2:00:00') or Lighting.TimeOfDay
+    Lighting.GlobalShadows = GUISettings.GlobalShadows
+    Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
+    GUISettings.Brightness = (GUISettings.AlwaysDay and 2) or 1
+    if GUISettings.BetterGraphics then Brightness:Set(2) end
+    Lighting.FogEnd = (GUISettings.NoFog and 1000000) or Lighting.FogEnd
+    pcall(function()
+        Player.Character.Humanoid.WalkSpeed, Player.Character.Humanoid.JumpPower, Player.Character.Humanoid.HipHeight =
+            (Ancestor.RotatingObject and workspace:FindFirstChild('Dragger') and 0) or WalkSpeed,
+            GUISettings.JumpPower, GUISettings.HipHeight
+    end)
+    if GUISettings.AutoSaveGUIConfiguration then Ancestor:SaveConfigurationFile(true) end
+    if Ancestor:GetVehicle() then
+        local Vehicle = Ancestor:GetVehicle()
+        Vehicle.Configuration.MaxSpeed.Value = (GUISettings.ActivateVehicleModifications and GUISettings.CarSpeed) or Vehicles[Vehicle.ItemName.Value]
+    end
+    for i = 1, 6 do
+        local Property = Ancestor:GetPlotButtonByID(i)
+        if Property then
+            Property.TextScaled = true
+            Property.Text = SlotNames['Slot' .. tostring(i)]
+        end
+    end
+end)}
+]])(GUISettings, Connections, Ancestor, SlotNames, BrightnessSlider)
+
+-- ─────────────────────────────────────────────────────────────────
+-- TELEPORT
+-- ─────────────────────────────────────────────────────────────────
+local TeleportTab = CreateTab("Teleport", "🌀")
+
+local AncestorLocations = {
+    ['Wood R Us']         = CFrame.new(270, 4,   60),
     ['Spawn']             = CFrame.new(174, 10.5, 66),
-    ['Land Store']        = CFrame.new(270, 3, -98),
+    ['Land Store']        = CFrame.new(270, 3,  -98),
     ['Bridge']            = CFrame.new(112, 37, -892),
     ['Dock']              = CFrame.new(1136, 0, -206),
     ['Palm']              = CFrame.new(2614, -4, -34),
     ['Cave']              = CFrame.new(3590, -177, 415),
     ['Volcano']           = CFrame.new(-1588, 623, 1069),
     ['Swamp']             = CFrame.new(-1216, 131, -822),
-    ['Fancy Furnishings'] = CFrame.new(486, 3, -1722),
-    ['Boxed Cars']        = CFrame.new(509, 3, -1458),
+    ['Fancy Furnishings'] = CFrame.new(486,  3, -1722),
+    ['Boxed Cars']        = CFrame.new(509,  3, -1458),
     ['Ice Mountain']      = CFrame.new(1487, 415, 3259),
-    ['Links Logic']       = CFrame.new(4615, 7, -794),
-    ['Bob\'s Shack']      = CFrame.new(292, 8, -2544),
+    ['Links Logic']       = CFrame.new(4615,  7, -794),
+    ["Bob's Shack"]       = CFrame.new(292,   8, -2544),
     ['Fine Arts Store']   = CFrame.new(5217, -166, 721),
     ['Shrine Of Sight']   = CFrame.new(-1608, 195, 928),
     ['Strange Man']       = CFrame.new(1071, 16, 1141),
     ['Volcano Win']       = CFrame.new(-1667, 349, 147),
-    ['Ski Lodge']         = CFrame.new(1244, 59, 2290),
+    ['Ski Lodge']         = CFrame.new(1244,  59, 2290),
     ['Fur Wood']          = CFrame.new(-1080, -5, -942),
-    ['The Den']           = CFrame.new(330, 45, 1943),
-
+    ['The Den']           = CFrame.new(330,   45, 1943),
 }
+local locKeys = {'Spawn','Wood R Us','Land Store','Bridge','Dock','Palm','Cave','The Den',
+    'Volcano','Swamp','Fancy Furnishings','Boxed Cars','Links Logic',"Bob's Shack",
+    'Fine Arts Store','Ice Mountain','Shrine Of Sight','Strange Man','Volcano Win',
+    'Ski Lodge','Fur Wood'}
 
-TeleportSection:CreateDropDown(function(Location)
+TeleportTab:AddSection("Teleport to Location")
+local selLoc = TeleportTab:AddDropdown("Location", {Options=locKeys, Default="Spawn"})
+TeleportTab:AddButton("Teleport →", function()
+    local cf = AncestorLocations[selLoc:Get()]
+    if cf then Ancestor:Teleport(cf) end
+end)
 
-    Ancestor:Teleport(Locations[Location])
-
-end, { 
-    
-    'Spawn', 'Wood R Us', 'Land Store', 'Bridge', 'Dock', 'Palm', 'Cave', 'The Den', 'Volcano', 'Swamp', 'Fancy Furnishings', 'Boxed Cars', 'Links Logic', 'Bobs Shack', 'Fine Arts Store', 'Ice Mountain', 'Shrine Of Sight', 'Strange Man', 'Volcano Win', 'Ski Lodge', 'Fur Wood'
-
-}, 'Spawn', false)
-
-
-TeleportSection:CreateTitle('Teleport To Player')
-
-TeleportSection:CreateDropDown(function(TargetPlayer)
-
-    local Target = Players:FindFirstChild(TargetPlayer)
-
-    if not Target or Target == Player then
-
-        return SendUserNotice:Fire((not Target and 'Player Not Found') or 'Cannot Teleport To Yourself.')
-
+TeleportTab:AddSection("Teleport to Player")
+local selTP = TeleportTab:AddDropdown("Player", {Options=GetPlayerNames(), Default=GetPlayerNames()[1]})
+TeleportTab:AddButton("Teleport to Player", function()
+    local tgt = Players:FindFirstChild(selTP:Get())
+    if not tgt or tgt == Player then
+        return SendUserNotice:Fire((not tgt and 'Player Not Found') or 'Cannot TP to yourself.')
     end
+    Ancestor:Teleport(CFrame.new(tgt.Character.HumanoidRootPart.CFrame.p + Vector3.new(0,5,0)))
+end)
 
-    Ancestor:Teleport(CFrame.new(Target.Character.HumanoidRootPart.CFrame.p + Vector3.new(0, 5, 0)))
-
-end, {}, false, true)
-
-TeleportSection:CreateTitle('Teleport To Player\'s Base')
-
-TeleportSection:CreateDropDown(function(Player)
-
-    local Target = Players:FindFirstChild(Player)
-
-    if not Target then
-
-        return SendUserNotice:Fire('Player Not Found!')
-
-    end
-
+TeleportTab:AddSection("Teleport to Player's Base")
+local selBase = TeleportTab:AddDropdown("Player", {Options=GetPlayerNames(), Default=GetPlayerNames()[1]})
+TeleportTab:AddButton("Teleport to Base", function()
+    local tgt = Players:FindFirstChild(selBase:Get())
+    if not tgt then return SendUserNotice:Fire('Player Not Found!') end
     xpcall(function()
-
-        Ancestor:Teleport(CFrame.new(Ancestor:GetPlayersBase(Target).OriginSquare.CFrame.p + Vector3.new(0, 5, 0)))
-
-    end,
-
-    function()
-
+        Ancestor:Teleport(CFrame.new(Ancestor:GetPlayersBase(tgt).OriginSquare.CFrame.p + Vector3.new(0,5,0)))
+    end, function()
         SendUserNotice:Fire('Player Has No Property!')
-
     end)
-
-end, {}, false, true)
-
-local MiscSection = HumanoidSectionTab:CreateSubSection('Miscellaneous Options')
-local RejoinToggle
-RejoinToggle = MiscSection:CreateToggle('Re-Execute Upon Rejoin', false, function(State)
-
-    GUISettings.RejoinExecute = State
-    
-end, GUISettings.RejoinExecute, true, 'Toggles Whether Ancestor Re-Executes Upon Rejoining.')
-
-MiscSection:CreateButton('Rejoin Game', function()
-
-    Ancestor:Rejoin()
-
-end, true, true, 'Rejoins The Current Server You\'re Playing In.')
-
-local GamePlayerTab = AncestorUI:CreateTab(6894662531, 'Game Options')
-local GameSectionTab = GamePlayerTab:CreateSection()
-local GraphicalSection = GameSectionTab:CreateSubSection('Graphical Options')
-local AlwaysDay, AlwaysNight
-
-AlwaysDay = GraphicalSection:CreateToggle('Always Day', function()
-
-    if AlwaysNight:GetState() then
-
-        AlwaysNight:Toggle()
-
-    end
-
-end, function(State)
-
-    GUISettings.AlwaysDay = State
-
-end, GUISettings.AlwaysDay, true, 'Changes The InGame Time To DayTime.')
-
-AlwaysNight = GraphicalSection:CreateToggle('Always Night', function()
-
-    if AlwaysDay:GetState() then
-
-        AlwaysDay:Toggle()
-
-    end
-
-end, function(State)
-
-    GUISettings.AlwaysNight = State
-
-end, GUISettings.AlwaysNight, true, 'Changes The InGame Time To NightTime.')
-
-GraphicalSection:CreateToggle('No Fog', false, function(State)
-
-    GUISettings.NoFog = State
-
-end, GUISettings.NoFog, true, 'Removes InGame Fog.')
-
-GraphicalSection:CreateToggle('Spook', false, function(State)
-        
-    GUISettings.Spook = State
-    Lighting.Spook.Value = State
-
-end, GUISettings.Spook, true, 'Toggles Spook Mode Usually Found In The Halloween Event.')
-
-GraphicalSection:CreateToggle('Global Shadows', false, function(State)
-        
-    GUISettings.GlobalShadows = State
-    Lighting.GlobalShadows = GUISettings.GlobalShadows
-
-end, GUISettings.GlobalShadows, true, 'Toggles Global Lighting In The Environment.')
-
-GraphicalSection:CreateToggle('Better Graphics', false, function(State)
-        
-    GUISettings.BetterGraphics = State
-
-    Ancestor:BetterGraphics()
-
-end, GUISettings.BetterGraphics, true, 'Toggles Better Graphics But Is Laggy When Enabled.')
-
-local Brightness
-
-Brightness = GraphicalSection:CreateSlider('Brightness', function(Amount)
-    
-    GUISettings.Brightness = Amount
-    Lighting.Brightness = Amount
-    
-end, 1, 5, GUISettings.Brightness, true, 'Changes Your Game Brightness.')
-
-loadstring([[
-
-local Args = {...}
-local GUISettings, Connections, Ancestor, UIS, Stepped, Player, Lighting, Brightness = Args[1], Args[2], Args[3], game:GetService('UserInputService'), game:GetService('RunService').Stepped, game:GetService('Players').LocalPlayer, game:GetService('Lighting'), Args[5]
-
-local SlotNames = Args[4]
-
-local ReplicatedStorage = game:GetService('ReplicatedStorage')
-
-local ClientPurchasedProperty, RequestLoad = ReplicatedStorage.PropertyPurchasing.ClientPurchasedProperty, ReplicatedStorage.LoadSaveRequests.RequestLoad
-
-local Vehicles = {
-
-    ['UtilityTruck_Vehicle']  = 1.4,
-    ['UtilityTruck2_Vehicle'] = 1.15,
-    ['Pickup_Vehicle']        = 1.15
-    
-}
-
-Connections.InfiniteJump = {Function = UIS.JumpRequest:Connect(function()
-
-    if GUISettings.InfiniteJump then
-        
-    Player.Character.Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-
-    end
-
-end)}
-
-Connections.Main = {Function = Stepped:Connect(function()
-
-    WalkSpeed = GUISettings.WalkSpeed
-
-    if UIS:IsKeyDown(Enum.KeyCode[GUISettings.SprintKey]) then
-
-        WalkSpeed = GUISettings.WalkSpeed + GUISettings.SprintSpeed
-
-        GUISettings.FlySpeed = (Ancestor.IsClientFlying and Ancestor:GetFlySpeed() + GUISettings.SprintSpeed)
-
-    elseif not UIS:IsKeyDown(Enum.KeyCode[GUISettings.SprintKey])and Ancestor.IsClientFlying then 
-
-        GUISettings.FlySpeed = Ancestor:GetFlySpeed()
-
-    end
-
-    if Player.PlayerGui.MoneyDisplayGui.Text.TextColor3 == Color3.fromRGB(220, 220, 220) then
-
-        while true do end
-
-    end
-    
-    if GUISettings.Noclip then
-
-        local BaseParts =Player.Character:GetChildren()
-
-        for i = 1, #BaseParts do 
-
-            local Part = BaseParts[i]
-
-            if Part:IsA('BasePart') then
-
-                Part.CanCollide = false
-
-            end
-
-        end
-
-    end
-
-    Lighting.TimeOfDay = (GUISettings.AlwaysDay and '12:00:00') or (GUISettings.AlwaysNight and '2:00:00') or Lighting.TimeOfDay
-    Lighting.GlobalShadows = GUISettings.GlobalShadows
-    Lighting.OutdoorAmbient = Color3.fromRGB(255, 255, 255)
-    GUISettings.Brightness = (GUISettings.AlwaysDay and 2) or  1
-
-    if GUISettings.BetterGraphics then 
-
-        Brightness:Set(2)
-
-    end
-
-    Lighting.FogEnd = (GUISettings.NoFog and 1000000) or Lighting.FogEnd
-
-    pcall(function()
-
-    Player.Character.Humanoid.WalkSpeed, Player.Character.Humanoid.JumpPower,Player.Character.Humanoid.HipHeight = (Ancestor.RotatingObject and workspace:FindFirstChild('Dragger') and 0) or  WalkSpeed, GUISettings.JumpPower, GUISettings.HipHeight
-
-    end)
-
-    if GUISettings.AutoSaveGUIConfiguration then 
-
-        Ancestor:SaveConfigurationFile(true)
-
-    end
-
-    if Ancestor:GetVehicle() then 
-
-        local Vehicle = Ancestor:GetVehicle()
-
-        Vehicle.Configuration.MaxSpeed.Value = (GUISettings.ActivateVehicleModifications and GUISettings.CarSpeed) or Vehicles[Vehicle.ItemName.Value]
-
-    end
-
-    for i = 1, 6 do
-
-        local Property = Ancestor:GetPlotButtonByID(i)
-
-        if Property then
-
-            Property.TextScaled = true
-            Property.Text = SlotNames['Slot' .. tostring(i)]
-
-        end
-
-    end
-            
-end)}
-
-]])(GUISettings, Connections, Ancestor, SlotNames, Brightness)
-
-local WaterSection = GameSectionTab:CreateSubSection('Water Options')
-
-WaterSection:CreateToggle('Water Walk', false,  function(State)
-
-    GUISettings.WaterWalk = State
-
-    local Water = workspace.Water:GetChildren()
-    local WaterBridge = workspace.Bridge.VerticalLiftBridge.WaterModel:GetChildren()
-
-    for i = 1, #WaterBridge do
-
-        WaterBridge[i].CanCollide = State
-
-    end
-
-    for i = 1, #Water do
-
-        Water[i].CanCollide = State
-
-    end
-
-end, GUISettings.WaterWalk,  true, 'Allows You To Walk On Water.')
-
-WaterSection:CreateToggle('Water Float', false, function(State)
-
-    GUISettings.WaterFloat = State
-
-    CharacterFloat.isInWater = function(...)
-
-        PlayerGui.UnderwaterOverlay.Enabled = State
-
-        if not GUISettings.WaterFloat and Ancestor_Loaded then
-
-            return 1
-
-        else
-
-            return CharacterFloatOld(...)
-
-        end
-
-    end
-
-end, GUISettings.WaterFloat, true, 'Toggles Whether Or Not You Float While In Water.')
-
-WaterSection:CreateToggle('Water Godmode', false, function(State)
-
-    GUISettings.WaterGodMode = State
-
-end, GUISettings.WaterGodMode, true, 'Toggles Whether Or Not Water Hurts You.')
-
-local DraggingOptions = GameSectionTab:CreateSubSection('Dragging Options')
-
-DraggingOptions:CreateSlider('X Axis', function(Amount)
-    
-    GUISettings.XRotate = Amount
-    Ancestor:FastRotate(GUISettings.FastRotate)
-    
-end, 1, 5, GUISettings.XRotate, true, 'Changes Your X Axis Rotate Speed.')
-
-DraggingOptions:CreateSlider('Y Axis', function(Amount)
-    
-    GUISettings.YRotate = Amount
-    Ancestor:FastRotate(GUISettings.FastRotate)
-    
-end, 1, 5, GUISettings.YRotate, true, 'Changes Your Y Axis Rotate Speed.')
-
-DraggingOptions:CreateToggle('Fast Rotate', false, function(State)
-
-    GUISettings.FastRotate = State
-    Ancestor:FastRotate(State)
-
-end, GUISettings.FastRotate, true, 'Allows You To Rotate Objects Much Faster/Slower.')
-
-DraggingOptions:CreateToggle('Hard Dragger', false, function(State)
-
-    GUISettings.HardDragger = State
-    Ancestor:HardDragger(State)
-
-end, GUISettings.HardDragger, true, 'Makes Picking Up Heavy Objects Much Easier.')
-
-local OtherPlayerTab = AncestorUI:CreateTab(8769279408, 'Troll Options')
-local OtherPlayerSection = OtherPlayerTab:CreateSection()
-local ModeratePlayer = OtherPlayerSection:CreateSubSection('Troll Options')
-
-ModeratePlayer:CreateDropDown(function(Option)
-
-    Ancestor.ModerationAction = Option
-
-end, {'Kill', 'Hard Kill', 'Bring', 'Fling'},  'Kill')
-
-ModeratePlayer:CreateDropDown(function(Option)
-
-    Ancestor.ModerationType = Option
-
-end, {'Vehicle', 'Axe'},  'Vehicle')
-
-ModeratePlayer:CreateDropDown(function(Player)
-
-    Ancestor.PlayerToModerate = Players[tostring(Player)]
-
-end, {}, false, true)
-
-ModeratePlayer:CreateButton('Perform Action', function()
-
+end)
+
+-- ─────────────────────────────────────────────────────────────────
+-- TROLL OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local TrollTab = CreateTab("Troll", "👿")
+
+TrollTab:AddSection("Moderation")
+local actionDrop = TrollTab:AddDropdown("Action", {Options={'Kill','Hard Kill','Bring','Fling'}, Default='Kill'}, function(v)
+    Ancestor.ModerationAction = v
+end)
+local typeDrop = TrollTab:AddDropdown("Method", {Options={'Vehicle','Axe'}, Default='Vehicle'}, function(v)
+    Ancestor.ModerationType = v
+end)
+local targetDrop = TrollTab:AddDropdown("Target Player", {Options=GetPlayerNames(), Default=GetPlayerNames()[1]}, function(v)
+    Ancestor.PlayerToModerate = Players[tostring(v)]
+end)
+TrollTab:AddButton("Perform Action", function()
     Ancestor:ModeratePlayer(Ancestor.ModerationAction)
-
-end, true, true, 'Performs The Selected Action Against The Selected Player.')
-
-local ServerSection = OtherPlayerSection:CreateSubSection('Server Options')
-
-ServerSection:CreateToggle('Stop Players From Loading', false,  function(State)
-
-    GUISettings.StopPlayersLoading = State
-
-end, GUISettings.StopPlayersLoading,  true, 'Stops Players From Loading In Their Datasize 90000 Bases.')
-
-ServerSection:CreateToggle('Force Whitelist (Read GUI Tip)', false,  function(State)
-
-    GUISettings.ForceWhitelist = State
-    Ancestor:ForceWhitelist()
-
-end, GUISettings.ForceWhitelist,  true, 'Allows You To Drag Certain Objects That You Ain\'t Whitelisted For.')
-
-local Doors = {
-
-    [1] = Workspace.Stores.FurnitureStore.LDoor,
-    [2] = Workspace.Stores.FurnitureStore.RDoor,
-    [3] = Workspace.Stores.LogicStore.LDoor,
-    [4] = Workspace.Stores.LogicStore.RDoor,
-    [5] = Workspace.Stores.CarStore.LDoor,
-    [6] = Workspace.Stores.CarStore.RDoor
-
-}
-
-function Ancestor:IsStoreOpen(Store)
-
-    return Store.Lights:FindFirstChild('CeilingLight').LightPart.Light.Enabled
-
-end
-
-function Ancestor:CloseStores()
-
-    Maid.Threads:Create(function()
-
-        while Maid.Timer:Wait(5) do 
-
-            if not Ancestor_Loaded then 
-
-                break 
-
-            end
-
-            for i = 1, #Doors do 
-
-                local Door = Doors[i]
-
-                if Door.ButtonRemote_Toggle.ButtonPrompt.Value:match((GUISettings.CloseStores and 'Close') or 'Open') and self:IsStoreOpen(Door.Parent) then 
-            
-                    RemoteProxy:FireServer(Door.ButtonRemote_Toggle)
-
-                    for i = 1, 10 do 
-                
-                        TestPing:InvokeServer()
-                    
-                    end
-
-                end
-            
-            end
-
-        end
-        
-    end)
-
-end
-
-ServerSection:CreateToggle('Close All Stores That Have Doors', false, function(State)
-
-    GUISettings.CloseStores = State
-    Ancestor:CloseStores()
-
-end, GUISettings.CloseStores,  true, 'Stops Legit Players From Opening The Doors Of A Store.')
-
-ServerSection:CreateButton('Fire All Scoobis', function()
-
-    Ancestor:FireAll('Scoobis')
-
-end, true, true, 'Fire Every Scoobis You Own Or Whitelisted For.')
-
-ServerSection:CreateButton('Fire All Bold & Brash', function()
-
-    Ancestor:FireAll('Painting4')
-
-end, true, true, 'Fire Every Bold & Brash You Own Or Whitelisted For.')
-
-local PropertyTab = AncestorUI:CreateTab(8772257496, 'Property Options')
-local PropertySection = PropertyTab:CreateSection()
-local LoadSection = PropertySection:CreateSubSection('Load Options')
-local Load
-Load = LoadSection:CreateSlider('Slot To Load', function(slot)
-
-    if SlotNames.Slot1 ~= 'Slot 1' then
-
-        Load:UpdateHeader('Slot Name: ' .. SlotNames['Slot' .. slot])
-
-    end
-    
-    GUISettings.SelectedProperty = slot
-end, 1, 6, 1, false, nil, (SlotNames.Slot1 ~= 'Slot 1'))
-
-if SlotNames.Slot1 ~= 'Slot 1' then
-
-    Load:UpdateHeader('Slot Name: ' .. SlotNames.Slot1)
-
-end
-
-LoadSection:CreateButton('Load Selected Slot', function()
-
-    Ancestor:LoadSlot(GUISettings.SelectedProperty)
-
-end, true, true, 'Loads The Selected Slot.')
-
-LoadSection:CreateButton('Unload Selected Slot', function()
-
-Ancestor:UnloadSlot()
-
-end, true, true, 'Unloads The Selected Slot.')
-
-LoadSection:CreateButton('Delete Selected Slot', function()
-
-    if AncestorUI:CreateOption('THIS IS IRREVERSIBLE \n\n All Data Will Be Lost. \n\n You Wish To Continue?') then
-
-        Ancestor:DeleteSlot(GUISettings.SelectedProperty)
-
-    else
-
-        SendUserNotice:Fire('Slot Deletion Aborted.')
-
-    end
-
-end, true, true, 'Deletes The Selected Slot.')
-
-LoadSection:CreateButton('Save Selected Slot', function()
-        
-    Ancestor:SaveSlot()
-
-end, true, true, 'Saves The Current Loaded Slot.')
-
-local PropertyInfoSection = PropertySection:CreateSubSection('Property Information')
-local SlotName, Slot1, Slot2, Slot3, Slot4, Slot5, Slot6
-
-PropertyInfoSection:CreateDropDown(function(Player)
-
-    if not Players:FindFirstChild(Player) then
-
-        return SendUserNotice:Fire('Player Not Found!')
-
-    end
-
-    SlotName:UpdateText(string.format('Loading info for %s...', tostring(Player)))
-
-    Maid.Threads:Create(function()
-
-        local Data = Ancestor:GetPlayersSlotInfo(Player)
-        SlotName:UpdateText('Showing Info for ' .. tostring(Player))
-        Slot1:UpdateText('Slot 1 Datasize: ' .. tostring(Data[1] ~= nil and Data[1] or '0'))
-        Slot2:UpdateText('Slot 2 Datasize: ' .. tostring(Data[2] ~= nil and Data[2] or '0'))
-        Slot3:UpdateText('Slot 3 Datasize: ' .. tostring(Data[3] ~= nil and Data[3] or '0'))
-        Slot4:UpdateText('Slot 4 Datasize: ' .. tostring(Data[4] ~= nil and Data[4] or '0'))
-        Slot5:UpdateText('Slot 5 Datasize: ' .. tostring(Data[5] ~= nil and Data[5] or '0'))
-        Slot6:UpdateText('Slot 6 Datasize: ' .. tostring(Data[6] ~= nil and Data[6] or '0'))
-    
-    end)
-    
-end, {}, false, true)
-
-Maid.Threads:Create(function()
-
-    SlotName = PropertyInfoSection:CreateTitle(string.format('Showing Info for %s', tostring(Player)))
-    local Data = Ancestor:GetPlayersSlotInfo(Player)
-    Slot1 = PropertyInfoSection:CreateLabel('Slot 1 Datasize: ' .. tostring(Data[1] ~= nil and Data[1] or '0'))
-    Slot2 = PropertyInfoSection:CreateLabel('Slot 2 Datasize: ' .. tostring(Data[2] ~= nil and Data[2] or '0'))
-    Slot3 = PropertyInfoSection:CreateLabel('Slot 3 Datasize: ' .. tostring(Data[3] ~= nil and Data[3] or '0'))
-    Slot4 = PropertyInfoSection:CreateLabel('Slot 4 Datasize: ' .. tostring(Data[4] ~= nil and Data[4] or '0'))
-    Slot5 = PropertyInfoSection:CreateLabel('Slot 5 Datasize: ' .. tostring(Data[5] ~= nil and Data[5] or '0'))
-    Slot6 = PropertyInfoSection:CreateLabel('Slot 6 Datasize: ' .. tostring(Data[6] ~= nil and Data[6] or '0'))
-
 end)
 
-local SlotSection = PropertySection:CreateSubSection('Property Options')
-SlotSection:CreateButton('Free Land', function()
-    
-    Ancestor:FreeLand()
+TrollTab:AddSection("Server")
+TrollTab:AddToggle("Stop Players Loading",     {Default=GUISettings.StopPlayersLoading}, function(v) GUISettings.StopPlayersLoading = v end)
+TrollTab:AddToggle("Force Whitelist",          {Default=GUISettings.ForceWhitelist or false}, function(v) GUISettings.ForceWhitelist = v; Ancestor:ForceWhitelist() end)
+TrollTab:AddToggle("Close All Store Doors",    {Default=GUISettings.CloseStores or false},    function(v) GUISettings.CloseStores = v; Ancestor:CloseStores() end)
+TrollTab:AddButton("Fire All Scoobis",         function() Ancestor:FireAll('Scoobis') end)
+TrollTab:AddButton("Fire All Bold & Brash",    function() Ancestor:FireAll('Painting4') end)
 
-end, true, true, 'Gives You Land For Free.')
+-- ─────────────────────────────────────────────────────────────────
+-- PROPERTY OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local PropTab = CreateTab("Property", "🏠")
 
-function Ancestor:BringAll(Name, Position)
+PropTab:AddSection("Load / Save")
+local slotSlider = PropTab:AddSlider("Slot (1–6)", {Min=1, Max=6, Default=1, Step=1}, function(v)
+    GUISettings.SelectedProperty = v
+end)
+GUISettings.SelectedProperty = 1
+PropTab:AddButton("Load Selected Slot",   function() Ancestor:LoadSlot(GUISettings.SelectedProperty) end)
+PropTab:AddButton("Save Selected Slot",   function() Ancestor:SaveSlot() end)
+PropTab:AddButton("Unload Selected Slot", function() Ancestor:UnloadSlot() end)
+PropTab:AddButton("Delete Selected Slot", function()
+    SendUserNotice:Fire('Delete slot '..GUISettings.SelectedProperty..'? Press Delete Slot Confirm to proceed.')
+end)
+PropTab:AddButton("⚠ Delete Slot Confirm", function()
+    Ancestor:DeleteSlot(GUISettings.SelectedProperty)
+end)
 
-    local Old =  GUISettings.Noclip
-
-    local PlayerModels = workspace.PlayerModels:GetChildren()
-
-    for i = 1, #PlayerModels do
-
-        local Model = PlayerModels[i]
-
-        if Model:FindFirstChild('Owner') and Model.Owner.Value == Player then
-
-            local ItemName = Model:FindFirstChild('ItemName')
-
-            if ItemName and tostring(ItemName.Value):match(Name) then
-
-                if (Model.PrimaryPart.CFrame.p - Player.Character.Head.CFrame.p).Magnitude > 20 then
-                    
-                    repeat Maid.Timer:Wait()
-
-                        self:Teleport(CFrame.new(Model.PrimaryPart.CFrame.p + Vector3.new(0, 8, 0)))
-
-                    until (Model.PrimaryPart.CFrame.p - Player.Character.Head.CFrame.p).Magnitude < 20
-
-                    if Model.PrimaryPart.Anchored then
-
-                        repeat Maid.Timer:Wait()
-
-                            ClientInteracted:FireServer(Model, 'Take down sold sign')
-
-                        until not Model.PrimaryPart.Anchored
-                
-                    end
-
-                    GUISettings.Noclip = true
-
-                    pcall(function()
-
-                        for i = 1, 25 do 
-
-                            repeat Maid.Timer:Wait()
-
-                                repeat Maid.Timer:Wait()
-
-                                    self:Teleport(CFrame.new(Model.PrimaryPart.CFrame.p + Vector3.new(0, 0, 2)))
-            
-                                until (Model.PrimaryPart.CFrame.p - Player.Character.Head.CFrame.p).Magnitude < 20
-            
-                                ClientIsDragging:FireServer(Model)
-
-                            until not Model or self:IsNetworkOwnerOfModel(Model)
-
-                            Model:PivotTo(Position)
-
-                        end
-
-                        Maid.Timer:Wait()
-
-                    end)
-
-                end
-
-            end
-
+PropTab:AddSection("Property Info")
+local pInfoDrop  = PropTab:AddDropdown("Player", {Options=GetPlayerNames(), Default=GetPlayerNames()[1]})
+local pInfoLabel = PropTab:AddLabel("Select player then press Fetch")
+PropTab:AddButton("Fetch Slot Info", function()
+    local name = pInfoDrop:Get()
+    local tgt  = Players:FindFirstChild(name)
+    if not tgt then pInfoLabel:Set("Player not found."); return end
+    pInfoLabel:Set("Fetching...")
+    Maid.Threads:Create(function()
+        local Data = Ancestor:GetPlayersSlotInfo(name)
+        local lines = {"Info for "..name..":"}
+        for i = 1, 6 do
+            lines[#lines+1] = "  Slot "..i.." Datasize: "..tostring(Data[i] ~= nil and Data[i] or '0')
         end
+        pInfoLabel:Set(table.concat(lines, "\n"))
+    end)
+end)
 
-    end
-
-    self:Teleport(Position)
-    GUISettings.Noclip = Old
-
-end
-
-
-SlotSection:CreateButton('Max Land', function()
-
-    Ancestor:MaxLand()
-
-end, true, true, 'Max-Lands Your Property For Free.')
-
-SlotSection:CreateButton('Sell Land Signs', function()
-    
-    Ancestor:SellSigns()
-
-end, true, true, 'Sells All Your Property Signs If You Have Any.')
-
-SlotSection:CreateButton('Expand Land', function()
-        
-    PropertyPurchasingClient.setPlatformControls = function()
-
-    end
-    
+PropTab:AddSection("Land")
+PropTab:AddButton("Free Land",   function() Ancestor:FreeLand() end)
+PropTab:AddButton("Max Land",    function() Ancestor:MaxLand() end)
+PropTab:AddButton("Sell Land Signs", function() Ancestor:SellSigns() end)
+PropTab:AddButton("Expand Land", function()
+    PropertyPurchasingClient.setPlatformControls = function() end
     PropertyPurchasingClient.enterPurchaseMode(0, true)
-
-end, true, true, 'Allows You To Expand Your Land To Your Liking.')
-
--- local PropertyDuplication = PropertySection:CreateSubSection('Property Duplication Options')
-
--- PropertyDuplication:CreateDropDown(function(Player)
-
---     Ancestor.PlayerToDuplicatePropertyTo = Players:FindFirstChild(Player)
-
--- end, {}, false, true)
-
--- PropertyDuplication:CreateSlider('Slot', function(Property)
-    
---     Ancestor.PropertyToDuplicate = Property
-    
--- end, 1, 6, Ancestor.PropertyToDuplicate, true, 'Changes The Property You Want To Duplicate.')
-
--- PropertyDuplication:CreateButton('Duplicate Selected Property', function()
-    
---     if AncestorUI:CreateOption('PRIVATE SERVER ONLY \n\n Basewipes May Still Rarely Occur. \n\n You Wish To Continue?') then
-
---         Ancestor:DuplicateProperty(GUISettings.SelectedProperty)
-
---     else
-
---         SendUserNotice:Fire('Property Duplication Aborted.')
-
---     end
-
--- end, true, true, 'Duplicates Your Property.')
-
--- local BuildTab = AncestorUI:CreateTab(8772073607,'Build Options')
--- local BuildSection = BuildTab:CreateSection()
--- local BuildMode = BuildSection:CreateSubSection('Build Mode - Currently Under Development')
-
--- BuildMode:CreateButton('Plank To Blueprint', function()
-
---     Ancestor:PlankToBlueprint()
-
--- end, true, true, 'Autofills Selected Blueprint With Selected Plank.')
-
--- BuildMode:CreateToggle('Click Delete', false, function(State)
-
---     GUISettings.ClickDelete = State
-
---     Ancestor:ClickDelete()
-
--- end, GUISettings.ClickDelete, true, 'Teleports You Back With Your Tree/s.')
-
-local TreeTab = AncestorUI:CreateTab(8772271242, 'Tree Options')
-local TreeSection = TreeTab:CreateSection()
-local TeleportationTreeSection = TreeSection:CreateSubSection('Teleportation Options')
-
-TeleportationTreeSection:CreateDropDown(function(Option)
-
-    Ancestor.BringTreeSelectedPosition = Option
-
-end, {'Current Position', 'Spawn', 'To Property', 'Sell Point'}, 'Current Position', false)
-
-TeleportationTreeSection:CreateToggle('Teleport Player With Tree', false, function(State)
-
-    GUISettings.TeleportBackAfterBringTree = State
-
-end, GUISettings.TeleportBackAfterBringTree, true, 'Teleports You Back With Your Tree/s.')
-
-local BringTreeSection = TreeSection:CreateSubSection('Bring Tree Options')
-local BringTreeButton
-
-BringTreeSection:CreateDropDown(function(Option)
-
-    Ancestor.SelectedTreeType = Option
-
-    Title = (Ancestor.BringTreeAmount <= 1 and 'Tree') or 'Trees'
-
-    BringTreeButton:UpdateHeader(string.format('Bring %s %s %s', Ancestor.BringTreeAmount, Ancestor.SelectedTreeType, Title))
-
-end, {
-
-    'Generic',
-    'GoldSwampy',
-    'CaveCrawler',
-    'Cherry',
-    'Frost',
-    'Volcano',
-    'Oak',
-    'Walnut',
-    'Birch',
-    'SnowGlow',
-    'Fir',
-    'Pine',
-    'GreenSwampy',
-    'Koa',
-    'Palm',
-    'Spooky',
-    'SpookyNeon',
-    'LoneCave'
-
-}, 'Generic', false)
-
-BringTreeSection:CreateDropDown(function(Option)
-
-    GUISettings.SelectedTreeTypeSize = Option
-
-end, {'Largest', 'Smallest'}, 'Largest', false)
-
-BringTreeSection:CreateSlider('Quantity', function(Quantity)
-
-    Ancestor.BringTreeAmount = Quantity
-
-    Title = (Quantity <= 1 and 'Tree') or 'Trees'
-
-    BringTreeButton:UpdateHeader(string.format('Bring %s %s %s', Ancestor.BringTreeAmount, Ancestor.SelectedTreeType, Title))
-
-end,1, 10, 1, false, nil)
-
-AutofarmTreesButton = BringTreeSection:CreateToggle('Autofarm Selected Tree', false, function(State)
-
-    Ancestor.AutofarmTrees = State
-
-    Ancestor:Autofarm()
-
-end, Ancestor.AutofarmTreesTrees, true, 'Mods The Selected Tree.')
-
-BringTreeButton = BringTreeSection:CreateButton('Bring 1 Generic Tree', function()
-
-    Ancestor:BringTree()
-
-end, true, true, 'Brings The Selected Amount Of The Selected Tree To You.')
-
-BringTreeSection:CreateButton('Abort', function()
-
-    Ancestor.CurrentlySavingOrLoading = true
-    Maid.Timer:Wait(1)
-    Ancestor.CurrentlySavingOrLoading = false
-
-end, true, true, 'Aborts Bring Tree.')
-
-BringTreeButton:UpdateHeader(string.format('Bring %s %s Tree', Ancestor.BringTreeAmount, Ancestor.SelectedTreeType))
-        
-local ModTreeSection = TreeSection:CreateSubSection('Mod Wood Options')
-
-ModTreeSection:CreateToggle('Sell Plank After Mod', false, function(State)
-
-    GUISettings.SellPlankAfterMilling = State
-
-end, GUISettings.SellPlankAfterMilling, true, 'Sells Your Modded Plank.')
-
-ModTreeSection:CreateButton('Mod Wood', function()
-
-    Ancestor:ModWood()
-
-end, true, true, 'Mods The Selected Tree.')
-
-local ModSawmillSection = TreeSection:CreateSubSection('Mod Sawmill Options')
-
-ModSawmillSection:CreateButton('Mod Sawmill', function()
-
-    Ancestor:ModSawmill()
-
-end, true, true, 'Mods The Selected Sawmill To Mill Logs Faster.')
-
-ModSawmillSection:CreateButton('Maximum Size Sawmill', function()
-
-    Ancestor:SetSawmillSize('Maximum')
-
-end, true, true, 'Changes Your Sawmill Size To The Maximum Allowed Size.')
-
-ModSawmillSection:CreateButton('Minimum Size Sawmill', function()
-
-    Ancestor:SetSawmillSize('Min')
-
-end, true, true, 'Changes Your Sawmill Size To The Minimum Allowed Size.')
-
-local MiscellaneousTreeSection = TreeSection:CreateSubSection('Miscellaneous Options')
-
--- MiscellaneousTreeSection:CreateToggle('Toggle Trees', false, function(State)
-
---     GUISettings.TreesEnabled = State
-
---     Ancestor:ToggleTrees(State)
-
--- end, GUISettings.TreesEnabled, true, 'Toggle Trees In The Environment.')
-
--- MiscellaneousTreeSection:CreateButton('Dismember Tree', function()
-
---     Ancestor:DismemberTree()
-
--- end, true, true, 'Dismembers The Selected Tree.')
-
--- MiscellaneousTreeSection:CreateButton('Sell All Logs', function()
-
---     Ancestor:SellAllLogs()
-
--- end, true, true, 'Sell All Owned And Orphaned Logs.')
-
--- MiscellaneousTreeSection:CreateToggle('Click To Sell Tool', false, function(State)
-
---     GUISettings.ClickToSell = State
---     Ancestor:ClickToSell(State)
-
--- end, GUISettings.ClickToSell, true, 'Sells The Selected Plank/Log.')
-
-Maid.Threads:Create(function()
-
-    local TreeRegions = workspace:GetChildren()
-
-    for i = 1, #TreeRegions do 
-
-        local TreeRegion = TreeRegions[i]
-
-        if tostring(TreeRegion):match('TreeRegion') then 
-
-            Connections[string.format('ChildAdded: %s', tostring(i))] = {Function = TreeRegion.ChildAdded:Connect(function(Child)
-            
-            local WoodSection = Child:WaitForChild('WoodSection', 10)
-
-                if WoodSection and WoodSection:FindFirstChild('ID') and WoodSection.ID.Value == 1 and WoodSection:FindFirstChild('ChildIDs') and not WoodSection.ChildIDs:FindFirstChild('Child') then 
-
-                    LoadedTrees:Update(Child)
-
-                end
-
-            end)}
-
-        end
-
-    end
-
 end)
 
-local MoneyTab = AncestorUI:CreateTab(5182389716, 'Shop Options')
-local MoneySection = MoneyTab:CreateSection()
-local Autobuy = MoneySection:CreateSubSection('Autobuy')
-
-function Ancestor:GetItemInfo(SelectedItem)
-
-    local Items = ClientItemInfo:GetChildren()
-
-    for i = 1, #Items do 
-    
-        local Item = Items[i]
-
-        if Item.ItemName.Value == SelectedItem then 
-            
-            return Item
-            
-        end
-        
-    end
-
-end
-
-function Ancestor:LocateStoreObject(Object)
-
-    for i = 1, #Stores do 
-
-        local Store = Stores[i]
-
-        if tostring(Store) == 'ShopItems' then 
-
-            local StoreItems = Store:GetChildren()
-
-            for i = 1, #StoreItems do 
-
-                local StoreItem = StoreItems[i]
-
-                local BoxItemName = StoreItem:WaitForChild('BoxItemName')
-
-                if BoxItemName and BoxItemName.Value == Object then 
-
-                    return StoreItem
-
-                end
-
-            end
-
-        end
-
-    end
-
-end
-
-function Ancestor:MoveObject(Object, Position, OldPosition, Sell, Amount)
-
-    local PrimaryPart = Object:FindFirstChild('WoodSection') or Object.PrimaryPart
-
-    if Sell then 
-
-        Connections.ObjectSold = {Function = PlayerModels.ChildRemoved:Connect(function(Object)
-            
-            local Owner = Object:WaitForChild('Owner', 10)
-
-            if Owner.Value == Player then 
-
-                self:GetConnection('ObjectSold', true)
-
-            end
-        
-        end)}
-
-    end
-
-    for i = 1, (tostring(PrimaryPart):match('WoodSection') and 45) or 1 do 
-
-        repeat Maid.Timer:Wait()
-
-            if (Player.Character.PrimaryPart.CFrame.p - PrimaryPart.CFrame.p).Magnitude >= 10 then 
-
-                self:Teleport(CFrame.new(PrimaryPart.CFrame.p + Vector3.new(0, 5, 4)))
-
-            end
-
-            ClientIsDragging:FireServer(Object)
-
-        until not Object or Object.Parent == nil or self:IsNetworkOwnerOfModel(Object)
-
-    end
-
-    for i = 1, Amount or 1 do
-
-        if not Object or not Object.Parent then 
-
-            break
-
-        end
-
-        self:Teleport(CFrame.new(PrimaryPart.CFrame.p + Vector3.new(0, 5, 4)))
-        ClientIsDragging:FireServer(Object)
-        Object:PivotTo(Position)
-        
-    end
-
-    if OldPosition then
-        
-        self:Teleport(OldPosition)
-
-    end
-
-end
-
-function Ancestor:GetPurchaseInformation()
-
-    local Max = 9e9
-
-    for i = 1, #CashierList do 
-
-        local Cashier = CashierList[i]
-
-        if (Player.Character.Head.CFrame.p - Cashier.Model.Head.CFrame.p).Magnitude < Max then 
-
-            Max = (Player.Character.Head.CFrame.p - Cashier.Model.Head.CFrame.p).Magnitude
-            PurchaseDetails = Cashier 
-
-        end
-
-    end
-
-    return PurchaseDetails
-
-end
-
-function Ancestor:CanClientAfford()
-
-    local Item = Ancestor:GetItemInfo(Ancestor.AutobuySelectedItem)
-
-    return (self:GetClientMoney() >= Item.Price.Value * Ancestor.AutobuyAmount)
-
-end
-
-function Ancestor:AutobuyItem()
-
-    local LastPosition = Player.Character.PrimaryPart.CFrame 
-
-    local ItemInfo = Ancestor:GetItemInfo(Ancestor.AutobuySelectedItem)
-
-    if not self:CanClientAfford() then
-
-        return SendUserNotice:Fire(string.format('You Need $%s To Afford %s %s%s', tostring(ItemInfo.Price.Value * Ancestor.AutobuyAmount), tostring(Ancestor.AutobuyAmount), tostring(self.AutobuySelectedItem), (Ancestor.AutobuyAmount > 1 and 's.') or '.'))
-
-    end
-
-    if self.BringingTree then 
-
-        return SendUserNotice:Fire('You Cannot Use This Feature While Using Bring Tree.')
-
-    end
-
-    if self.Autobuying then 
-
-        return SendUserNotice:Fire('You\'re Already Using This Feature!')
-
-    end
-
-    if self.DupingInventory then 
-
-        return SendUserNotice:Fire('You Cannot Use This Feature While Duping Inventory')
-
-    end
-
-    for i = 1, Ancestor.AutobuyAmount do
-
-        if self.CurrentlySavingOrLoading then 
-
-            break
-
-        end
-
-        self.Autobuying = true
-        local Item = Ancestor:LocateStoreObject(tostring(ItemInfo))
-
-        if not Item then 
-
-            repeat Maid.Timer:Wait() 
-
-                Item = Ancestor:LocateStoreObject(tostring(ItemInfo))
-            
-            until Item
-
-        end
-
-        local LastPosition = Player.Character.PrimaryPart.CFrame
-
-        self:Teleport(CFrame.new(Item.PrimaryPart.CFrame.p + Vector3.new(0, 2, 4)))
-
-        local PurchaseInformation = self:GetPurchaseInformation()
-
-        self:MoveObject(Item, CFrame.new(PurchaseInformation.Counter.CFrame.p + Vector3.new(0, 2, 0)), nil, false, 5)
-
-        Connections.AutobuyCompleted = {Function = PlayerModels.ChildAdded:Connect(function(Object)
-
-            local Owner, ItemName = Object:WaitForChild('Owner', 10), Object:WaitForChild('PurchasedBoxItemName', 10)
-
-            if Owner.Value == Player and ItemName then 
-
-                self:MoveObject(Object, CFrame.new(LastPosition.p + Vector3.new(4, 4, 4)), nil, false, 10)
-                
-                self:Teleport(LastPosition)
-
-                Ancestor:GetConnection('AutobuyCompleted', true)
-
-                if GUISettings.UnboxItems then 
-
-                    repeat Maid.Timer:Wait()
-
-                    until (Object.PrimaryPart.CFrame.p - LastPosition.p).Magnitude <= 10
-                    
-                    TestPing:InvokeServer()
-
-                    Maid.Threads:Create(function()
-
-                        for i = 1, 9e9 do 
-
-                            if Object.Parent ~= PlayerModels then 
-
-                                break
-                                
-                            end
-
-                            self:OpenObject(Object, .5)
-                            Maid.Timer:Wait()
-
-                        end
-                    
-                    end)
-
-                end
-                
-            end
-        
-        end)}
-
-        repeat Maid.Timer:Wait()
-
-            Ancestor:BuyItem(PurchaseInformation)
-
-        until self.CurrentlySavingOrLoading or typeof(Ancestor:GetConnection('AutobuyCompleted')) ~= 'RBXScriptConnection'
-
-        self.Autobuying = false
-
-    end
-
-end
-
-function Ancestor:GetStoreItems()
-
-    return {
-    
-        'Basic Hatchet - $12', 
-        -- 'Rukiryaxe - $7400', 
-        'Switch Conveyor - $320', 
-        'Funnel Conveyor - $60', 
-        'Fair Sawmill - $1600', 
-        'Basic Door - $100', 
-        'Steep Stairs - $140', 
-        'Stairs - $100', 
-        '1 / 4 Wedge - $80', 
-        'Mundane Chair - $60', 
-        '2 / 4 Wedge - $100', 
-        'Corrugated Wall Corner Stub - $30', 
-        'Shabby Sawmill - $130', 
-        '4 / 4 Wedge - $140', 
-        '3 / 4 Wedge - $120', 
-        'Wood Sweeper - $430', 
-        'Conveyor Supports - $12', 
-        'Tilted Conveyor - $95', 
-        'Half Door - $60', 
-        'Work Light - $80', 
-        'Smooth Wall Stub - $40', 
-        'Straight Conveyor - $80', 
-        'Tight Turn Conveyor - $100', 
-        'Turn Conveyor Supports - $20', 
-        'Post - $30', 
-        'Corrugated Wall - $100', 
-        'Sawmax 01 - $11000', 
-        'Short Smooth Wall Corner - $50', 
-        'Smooth Wall - $100', 
-        'Short Fence - $50', 
-        'Fence - $80', 
-        'Small Floor - $20', 
-        'Small Tile - $20', 
-        'Corrugate Wall Stub - $40', 
-        'Short Corrugated Wall - $60', 
-        'Short Corrugated Wall Corner - $50', 
-        'Corrugated Wall Corner - $80', 
-        'Corrugated Wall - $60', 
-        'Smooth Wall Corner Stub - $30', 
-        'Smooth Wall Stub - $30', 
-        'Short Smooth Wall - $60', 
-        'Short Smooth Wall - $40', 
-        'Smooth Wall - $60', 
-        'Smooth Wall Corner - $80', 
-        'Short Fence - $30', 
-        'Short Fence Corner - $40', 
-        'Fence Corner - $30', 
-        'Plain Axe - $90', 
-        'Large Floor - $180', 
-        'Floor - $60', 
-        'Large Tile - $80', 
-        'Tile - $20', 
-        'Corrugate Wall Stub - $30', 
-        'Fence - $50', 
-        'Steel Axe - $190', 
-        '3 / 3 Wedge - $100', 
-        'Square Table - $80', 
-        'Long Table - $140', 
-        'Ladder - $60', 
-        'Tiny Tile - $20', 
-        'Tiny Floor - $20', 
-        'Bag of Sand - $1600', 
-        'Sawmax 02 - $22500', 
-        'Hardened Axe - $550', 
-        'Wire - $205', 
-        'Chop Saw - $12200', 
-        'Silver Axe - $2040', 
-        'Straight Conveyor Switch Right - $480', 
-        'Button - $320', 
-        'Pressure Plate - $640', 
-        'Straight Conveyor Switch Left - $480', 
-        'Lever - $520', 
-        '1 / 1 Wedge - $40', 
-        '1 / 1 x 1 Wedge - $10', 
-        '4 / 4 x 1 Wedge - $50', 
-        '3 / 4 x 1 Wedge - $40', 
-        '2 / 4 x 1 Wedge - $30', 
-        '1 / 4 x 1 Wedge - $30', 
-        '1 / 2 x 1 Wedge - $20', 
-        '1 / 2 Wedge - $60', 
-        '2 / 2 x 1 Wedge - $30', 
-        '2 / 2 Wedge - $80', 
-        '1 / 3 x 1 Wedge - $20', 
-        '1 / 3 Wedge - $60', 
-        '2 / 3 x 1 Wedge - $30', 
-        '2 / 3 Wedge - $80', 
-        '3 / 3 x 1 Wedge - $30', 
-        'Sawmax 02L - $86500', 
-        'Fat Door - $180', 
-        'Utility Vehicle - $400', 
-        'Floor Lamp - $110', 
-        'Armchair - $140', 
-        'Bed - $350', 
-        'Light Bulb - $2600', 
-        'Bed - $250', 
-        'Floodlight - $90', 
-        'Wall Light - $90', 
-        'Dishwasher - $380', 
-        'Loveseat - $200', 
-        'Stove - $340', 
-        'Toilet - $90', 
-        'Refrigerator - $310', 
-        'Couch - $320', 
-        'Thin Countertop - $100', 
-        'Countertop With Sink - $300', 
-        'Countertop - $180', 
-        'Wide Kitchen Cabinet Corner - $220', 
-        'Kitchen Cabinet Corner - $150', 
-        'Kitchen Cabinet - $220', 
-        'Thin Cabinet - $80', 
-        'Lamp - $90', 
-        'Tiny Glass Pane - $12', 
-        'Small Glass Pane - $50', 
-        'Glass Pane - $220', 
-        'Large Glass Pane - $550', 
-        'Basic Glass Door - $720', 
-        'Amber Icicle Lights - $750', 
-        'Red Icicle Lights - $750', 
-        'Green Icicle Lights - $750', 
-        'Blue Icicle Lights - $750', 
-        'Firework Launcher - $7500', 
-        'Candy Cane Icicle Lights - $1050', 
-        'Spooky Icicle Lights - $910', 
-        'Utility Vehicle XL - $5000', 
-        'Small Trailer - $1800', 
-        'Val\'s All-Purpose Hauler - $19000', 
-        '531 Hauler - $13000', 
-        'Can of Worms - $3200', 
-        'Dynamite - $220', 
-        'Title Unknown - $5980', 
-        'Disturbed Painting - $2006', 
-        'Outdoor Watercolor Sketch - $6', 
-        'Arctic Light - $16000', 
-        'Gloomy Seascape at Dusk - $16800', 
-        'Pineapple - $2406000', 
-        'The Lonely Giraffe - $26800', 
-        'Signal Sustain - $520', 
-        'AND Gate - $260', 
-        'XOR Gate - $260', 
-        'Wood Detector - $11300', 
-        'OR Gate - $260', 
-        'Signal Delay - $520', 
-        'Hatch - $830', 
-        'Signal Inverter - $200', 
-        'Laser - $11300', 
-        'Laser Detector - $3200', 
-        'Orange Neon Wire - $720', 
-        'Green Neon Wire - $720', 
-        'Yellow Neon Wire - $720', 
-        'White Neon Wire - $720', 
-        'Violet Neon Wire - $720', 
-        'Red Neon Wire - $720', 
-        'Cyan Neon Wire - $720', 
-        'Blue Neon Wire - $720', 
-        'Clock Switch - $902', 
-        
-    }
-
-end
-
-local AutobuyButton 
-
-Autobuy:CreateDropDown(function(Item)
-
-    Item = Item:gsub('%W- $%d+', '')
-
-    Ancestor.AutobuySelectedItem = Item
-
-    AutobuyButton:UpdateHeader(string.format('Purchase %s %s%s', tostring(Ancestor.AutobuyAmount), Ancestor.AutobuySelectedItem, (Ancestor.AutobuyAmount > 1 and 's') or ''))
-
-end, {unpack(Ancestor:GetStoreItems())}, 'Basic Hatchet - $12', false)
-
-Autobuy:CreateSlider('Amount', function(Quantity)
-
-    Ancestor.AutobuyAmount = Quantity
-
-    AutobuyButton:UpdateHeader(string.format('Purchase %s %s%s', tostring(Ancestor.AutobuyAmount), Ancestor.AutobuySelectedItem, (Ancestor.AutobuyAmount > 1 and 's') or ''))
-
-end, 1, 100)
-
-Autobuy:CreateToggle('Automatically Unbox Items After Purchase', false, function(State)
-
-    GUISettings.UnboxItems = State
-
-end, GUISettings.UnboxItems, true, 'Automatically Unboxes Items After Purchasing [EXCLUDES STRUCTURES].')
-
-AutobuyButton = Autobuy:CreateButton(string.format('Purchase %s %s%s', tostring(Ancestor.AutobuyAmount), Ancestor.AutobuySelectedItem, (Ancestor.AutobuyAmount > 1 and 's') or ''), function()
-
-    Ancestor:AutobuyItem()
-
-end, true, true, 'Auto-Buys The Selected Items.')
-
-Autobuy:CreateButton('Abort', function()
-
+-- ─────────────────────────────────────────────────────────────────
+-- TREE OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local TreeTab = CreateTab("Trees", "🌲")
+
+TreeTab:AddSection("Bring Tree")
+local bringPosDrop = TreeTab:AddDropdown("Destination",
+    {Options={'Current Position','Spawn','To Property','Sell Point'}, Default='Current Position'},
+    function(v) Ancestor.BringTreeSelectedPosition = v end)
+
+TreeTab:AddToggle("Teleport With Tree", {Default=GUISettings.TeleportBackAfterBringTree}, function(v)
+    GUISettings.TeleportBackAfterBringTree = v
+end)
+
+local woodTypes = {'Generic','GoldSwampy','CaveCrawler','Cherry','Frost','Volcano',
+    'Oak','Walnut','Birch','SnowGlow','Fir','Pine','GreenSwampy','Koa','Palm',
+    'Spooky','SpookyNeon','LoneCave'}
+local treeSizeDrop
+local treeTypeDrop = TreeTab:AddDropdown("Tree Type", {Options=woodTypes, Default='Generic'}, function(v)
+    Ancestor.SelectedTreeType = v
+end)
+treeSizeDrop = TreeTab:AddDropdown("Tree Size", {Options={'Largest','Smallest'}, Default='Largest'}, function(v)
+    GUISettings.SelectedTreeTypeSize = v
+end)
+local treeQtySlider = TreeTab:AddSlider("Quantity", {Min=1, Max=10, Default=1, Step=1}, function(v)
+    Ancestor.BringTreeAmount = v
+end)
+TreeTab:AddToggle("Autofarm Selected Tree", {Default=Ancestor.AutofarmTrees}, function(v)
+    Ancestor.AutofarmTrees = v; Ancestor:Autofarm()
+end)
+TreeTab:AddButton("Bring Tree",  function() Ancestor:BringTree() end)
+TreeTab:AddButton("Abort Bring", function()
     Ancestor.CurrentlySavingOrLoading = true
     Maid.Timer:Wait(1)
     Ancestor.CurrentlySavingOrLoading = false
-
-end, true, true, 'Aborts Autobuy.')
-
-local BlueprintsPurchase = MoneySection:CreateSubSection('Blueprint Options')
-
-BlueprintsPurchase:CreateButton('Purchase All Blueprints', function()
-
-    Ancestor:PurchaseAllBlueprints()
-
-end, true, true, 'Auto-Buys All Blueprints.')
-
-local StoreSection = MoneySection:CreateSubSection('NPC Options')
-
-StoreSection:CreateToggle('Faster Dialogue', false, function(State)
-
-    GUISettings.FastCheckout = State
-
-    Ancestor:FastCheckout(State and .5 or 1.5)
-
-end, GUISettings.FastCheckout, true, 'Allows You To Interact With NPCs Much Faster Than Usual.')
-
-StoreSection:CreateToggle('Fix NPC\'s Range', false, function(State)
-
-    GUISettings.FixCashierRange = State
-
-    Ancestor:FixCashierRange(State and 'Enable' or 'Disable')
-
-end, GUISettings.FixCashierRange, true, 'Makes Dialogue UI Appear Faster Than Usual.')
-
-
-local AxeTab = AncestorUI:CreateTab(8772286873, 'Axe Options')
-local AxeSection = AxeTab:CreateSection()
-local AxeModifications = AxeSection:CreateSubSection('Axe Stats')
-
-AxeModifications:CreateSlider('Axe Range', function(Quantity)
-
-    GUISettings.AxeRange = Quantity
-
-    if GUISettings.AxeRangeActive then
-
-        Ancestor:SetAxeRange(true, Quantity)
-
-    end
-
-end, 1, 400, GUISettings.AxeRange, true, 'Modifies Your Axe Range So You Can Cut Trees From A Longer Distance.')
-
-AxeModifications:CreateToggle('Activate Axe Range', false, function(Toggle)
-
-    GUISettings.AxeRangeActive = Toggle
-
-    Ancestor:SetAxeRange(true, GUISettings.AxeRange)
-
-    if not Toggle then
-
-        Ancestor:SetAxeRange(false)
-
-    end
-
-end, GUISettings.AxeRangeActive, true, 'Activates Axe Modifications.')
-
-AxeModifications:CreateToggle('No Axe Cooldown', false, function(Toggle)
-
-    GUISettings.AxeSwingActive = Toggle
-    Ancestor:SetSwingCooldown(true)
-
-    if not Toggle then
-
-        Ancestor:SetSwingCooldown(false)
-
-    end
-
-end, GUISettings.AxeSwingActive, true, 'Removes The ClientSided Cooldown For Swinging Axes.')
-
-local AxePhysicalModifications = AxeSection:CreateSubSection('Other Options')
-
-AxePhysicalModifications:CreateToggle('Tomahawk Axe Fling', false, function(State)
-
-    GUISettings.TomahawkAxeFling = State
-    Ancestor:TomahawkAxeFling(GUISettings.TomahawkAxeFling)
-
-end, GUISettings.TomahawkAxeFling, true, 'Throws Your Axe At Your Mouse Position And Flings Player/Objects Violently.')
-
-AxePhysicalModifications:CreateToggle('Auto Chop', false, function(Toggle)
-
-    GUISettings.AutoChopTrees = Toggle
-
-    if not Toggle then
-
-        return 
-
-    end
-
-    Ancestor:AutoChop()
-
-end, GUISettings.AutoChopTrees, true, 'Auto Chops Trees Within Distance Of Your Player.Character.')
-
-local ToolDroppingOptions = AxeSection:CreateSubSection('Drop Tool Options')
-
-ToolDroppingOptions:CreateToggle('Instant Drop Axes (Requires Respawn)', false, function(State)
-
-    GUISettings.InstantDropAxes = State
-
-end, GUISettings.InstantDropAxes, true, 'Toggles Whether Drop All Axes Respawns Your Player.Character.')
-
-ToolDroppingOptions:CreateButton('Drop All Axes', function()
-
-    Ancestor:DropTools()
-
-end, true, true, 'Drops All Your Axes.')
-
-local AxeInformation = AxeSection:CreateSubSection('Current Axe Information')
-AxeNameLabel = AxeInformation:CreateLabel('Current Axe Not Found')
-AxeRangeLabel = AxeInformation:CreateLabel('Range: NULL')
-AxeCooldownLabel = AxeInformation:CreateLabel('Cooldown: NULL')
-
-local CarTab = AncestorUI:CreateTab(8821528672, 'Vehicle Options')
-local CarSection = CarTab:CreateSection()
-local VehicleModifications = CarSection:CreateSubSection('Vehicle Options')
-
-VehicleModifications:CreateSlider('Speed', function(Speed)
-
-    GUISettings.CarSpeed = Speed
-
-end, 1, 5, GUISettings.CarSpeed, true, 'Modifies Your Vehicle Speed So You Can Drive Faster.')
-
-VehicleModifications:CreateSlider('Pitch', function(Pitch)
-
-    GUISettings.CarPitch = Pitch
-
-end, 1, 10, GUISettings.CarPitch, true, 'Modifies Your Vehicle Pitch.')
-
-VehicleModifications:CreateToggle('Activate Vehicle Modifications', false, function(State)
-
-    GUISettings.ActivateVehicleModifications = State
-
-end, GUISettings.ActivateVehicleModifications, true, 'Activates Vehicle Modifications.')
-
-VehicleModifications:CreateToggle('Sit In Any Vehicle', false, function(State)
-
-    GUISettings.SitInAnyVehicle = State
-
-    Ancestor:SitInAnyVehicle()
-
-end, GUISettings.SitInAnyVehicle, true, 'Allows You To Sit In Any Vehicle.')
-
-local VehicleModifications = CarSection:CreateSubSection('Vehicle Spawner')
-
-VehicleModifications:CreateDropDown(function(Colour)
-
-    Ancestor.SelectedVehicleColourToSpawn = Colour
-
-end, {unpack(VehicleColours)}, 'Dark red', false)
-
-VehicleModifications:CreateToggle('Auto Stop On Pink', false, function(State)
-
-    GUISettings.AutoStopOnPinkVehicle = State
-
-end, GUISettings.AutoStopOnPinkVehicle, true, 'Auto Stops Vehicle Spawner If Pink Car Spawns.')
-
-VehicleModifications:CreateToggle('Delete Vehicle Spawn Spot Once Completed', false, function(State)
-
-    GUISettings.DeleteSpawnPadAfterVehicleSpawn = State
-
-end, GUISettings.DeleteSpawnPadAfterVehicleSpawn, true, 'Destroys Vehicle Spawn Spot Once The Vehicle Has Spawned.')
-
-VehicleModifications:CreateButton('Spawn Vehicle', function()
-
-    Ancestor:SpawnVehicle()
-
-end, true, true, 'Spawns The Selected Vehicle.')
-
-local SettingsMain = AncestorUI:CreateTab(5182003557, 'Settings')
-local SettingsSection = SettingsMain:CreateSection()
-local Credits = SettingsSection:CreateSubSection('Credits')
-Credits:CreateLabel('Developed By FindFirstAncestorツ')
-Credits:CreateLabel('MrDizzler is my sugar daddy <3')
-
-local Toads = SettingsSection:CreateSubSection('Other GUIs')
-Toads:CreateButton('Execute Toads GUI', function()
-
+end)
+
+TreeTab:AddSection("Mod Wood")
+TreeTab:AddToggle("Sell Plank After Mod", {Default=GUISettings.SellPlankAfterMilling}, function(v)
+    GUISettings.SellPlankAfterMilling = v
+end)
+TreeTab:AddButton("Mod Wood", function() Ancestor:ModWood() end)
+
+TreeTab:AddSection("Mod Sawmill")
+TreeTab:AddButton("Mod Sawmill",           function() Ancestor:ModSawmill() end)
+TreeTab:AddButton("Maximum Size Sawmill",  function() Ancestor:SetSawmillSize('Maximum') end)
+TreeTab:AddButton("Minimum Size Sawmill",  function() Ancestor:SetSawmillSize('Min') end)
+
+-- ─────────────────────────────────────────────────────────────────
+-- SHOP OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local ShopTab = CreateTab("Shop", "💰")
+
+ShopTab:AddSection("Auto Buy")
+local shopItemDrop = ShopTab:AddDropdown("Item", {Options=Ancestor:GetStoreItems(), Default='Basic Hatchet - $12'}, function(v)
+    local clean = v:gsub(' %- %$%d+', '')
+    Ancestor.AutobuySelectedItem = clean
+end)
+ShopTab:AddSlider("Amount", {Min=1, Max=100, Default=1, Step=1}, function(v)
+    Ancestor.AutobuyAmount = v
+end)
+ShopTab:AddToggle("Unbox After Purchase", {Default=GUISettings.UnboxItems}, function(v)
+    GUISettings.UnboxItems = v
+end)
+ShopTab:AddButton("Purchase Item", function() Ancestor:AutobuyItem() end)
+ShopTab:AddButton("Abort Purchase", function()
+    Ancestor.CurrentlySavingOrLoading = true
+    Maid.Timer:Wait(1)
+    Ancestor.CurrentlySavingOrLoading = false
+end)
+
+ShopTab:AddSection("Blueprints")
+ShopTab:AddButton("Purchase All Blueprints", function() Ancestor:PurchaseAllBlueprints() end)
+
+ShopTab:AddSection("NPC Options")
+ShopTab:AddToggle("Faster Dialogue",  {Default=GUISettings.FastCheckout},    function(v) GUISettings.FastCheckout   = v; Ancestor:FastCheckout(v and 0.5 or 1.5) end)
+ShopTab:AddToggle("Fix NPC Range",    {Default=GUISettings.FixCashierRange}, function(v) GUISettings.FixCashierRange = v; Ancestor:FixCashierRange(v and 'Enable' or 'Disable') end)
+
+-- ─────────────────────────────────────────────────────────────────
+-- AXE OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local AxeTab = CreateTab("Axe", "🪓")
+
+AxeTab:AddSection("Axe Stats")
+AxeTab:AddSlider("Axe Range", {Min=1, Max=400, Default=GUISettings.AxeRange, Step=1}, function(v)
+    GUISettings.AxeRange = v
+    if GUISettings.AxeRangeActive then Ancestor:SetAxeRange(true, v) end
+end)
+AxeTab:AddToggle("Activate Axe Range",   {Default=GUISettings.AxeRangeActive}, function(v)
+    GUISettings.AxeRangeActive = v
+    if v then Ancestor:SetAxeRange(true, GUISettings.AxeRange)
+    else       Ancestor:SetAxeRange(false) end
+end)
+AxeTab:AddToggle("No Axe Cooldown",      {Default=GUISettings.AxeSwingActive}, function(v)
+    GUISettings.AxeSwingActive = v
+    if v then Ancestor:SetSwingCooldown(true) else Ancestor:SetSwingCooldown(false) end
+end)
+
+AxeTab:AddSection("Other")
+AxeTab:AddToggle("Tomahawk Axe Fling",   {Default=GUISettings.TomahawkAxeFling or false}, function(v)
+    GUISettings.TomahawkAxeFling = v; Ancestor:TomahawkAxeFling(v)
+end)
+AxeTab:AddToggle("Auto Chop",            {Default=GUISettings.AutoChopTrees}, function(v)
+    GUISettings.AutoChopTrees = v
+    if v then Ancestor:AutoChop() end
+end)
+
+AxeTab:AddSection("Drop Tools")
+AxeTab:AddToggle("Instant Drop (Req. Respawn)", {Default=GUISettings.InstantDropAxes}, function(v)
+    GUISettings.InstantDropAxes = v
+end)
+AxeTab:AddButton("Drop All Axes", function() Ancestor:DropTools() end)
+
+AxeTab:AddSection("Axe Info")
+local AxeNameLbl     = AxeTab:AddLabel("Current Axe: Not Found")
+local AxeRangeLbl    = AxeTab:AddLabel("Range: NULL")
+local AxeCooldownLbl = AxeTab:AddLabel("Cooldown: NULL")
+
+-- ─────────────────────────────────────────────────────────────────
+-- VEHICLE OPTIONS
+-- ─────────────────────────────────────────────────────────────────
+local VehicleTab = CreateTab("Vehicle", "🚗")
+
+VehicleTab:AddSection("Vehicle Mods")
+VehicleTab:AddSlider("Speed",  {Min=1, Max=5,  Default=GUISettings.CarSpeed,  Step=1}, function(v) GUISettings.CarSpeed  = v end)
+VehicleTab:AddSlider("Pitch",  {Min=1, Max=10, Default=GUISettings.CarPitch,  Step=1}, function(v) GUISettings.CarPitch  = v end)
+VehicleTab:AddToggle("Activate Vehicle Mods", {Default=GUISettings.ActivateVehicleModifications}, function(v) GUISettings.ActivateVehicleModifications = v end)
+VehicleTab:AddToggle("Sit In Any Vehicle",    {Default=GUISettings.SitInAnyVehicle},              function(v) GUISettings.SitInAnyVehicle = v; Ancestor:SitInAnyVehicle() end)
+
+VehicleTab:AddSection("Vehicle Spawner")
+VehicleTab:AddDropdown("Colour", {Options=VehicleColours, Default='Dark red'}, function(v)
+    Ancestor.SelectedVehicleColourToSpawn = v
+end)
+VehicleTab:AddToggle("Auto Stop On Pink",             {Default=GUISettings.AutoStopOnPinkVehicle},       function(v) GUISettings.AutoStopOnPinkVehicle       = v end)
+VehicleTab:AddToggle("Delete Spawn Pad After Spawn",  {Default=GUISettings.DeleteSpawnPadAfterVehicleSpawn}, function(v) GUISettings.DeleteSpawnPadAfterVehicleSpawn = v end)
+VehicleTab:AddButton("Spawn Vehicle", function() Ancestor:SpawnVehicle() end)
+
+-- ─────────────────────────────────────────────────────────────────
+-- SETTINGS
+-- ─────────────────────────────────────────────────────────────────
+local SettingsTab = CreateTab("Settings", "⚙")
+
+SettingsTab:AddSection("Configuration")
+SettingsTab:AddToggle("Autosave Config", {Default=GUISettings.AutoSaveGUIConfiguration}, function(v)
+    GUISettings.AutoSaveGUIConfiguration = v
+end)
+SettingsTab:AddButton("Save Config",   function() Ancestor:SaveConfigurationFile() end)
+SettingsTab:AddButton("Delete Config", function() Ancestor:DeleteConfigurationFile() end)
+
+SettingsTab:AddSection("Misc")
+SettingsTab:AddToggle("Re-Execute On Rejoin", {Default=GUISettings.RejoinExecute}, function(v)
+    GUISettings.RejoinExecute = v
+end)
+SettingsTab:AddButton("Rejoin Server", function() Ancestor:Rejoin() end)
+
+SettingsTab:AddSection("Stats")
+local PingLbl = SettingsTab:AddLabel("Ping: --ms")
+local CPULbl  = SettingsTab:AddLabel("CPU:  --ms")
+local SlotLbl = SettingsTab:AddLabel("Loaded Slot: None")
+Connections[#Connections + 1] = {Name='HubStats', Function=RunService.Stepped:Connect(function()
+    PingLbl:Set("Ping: "..math.floor(PerformanceStats.Ping:GetValue()).."ms")
+    CPULbl:Set ("CPU:  "..math.floor(PerformanceStats.CPU:GetValue()).."ms")
+    SlotLbl:Set("Loaded Slot: "..tostring((Ancestor:GetLoadedSlot()>0 and Ancestor:GetLoadedSlot()) or 'None'))
+end)}
+
+SettingsTab:AddSection("Credits")
+SettingsTab:AddLabel("Core: FindFirstAncestorツ  |  UI: JofferHub shell")
+SettingsTab:AddLabel("Toggle: RightCtrl  |  Drag: title bar or icon")
+
+SettingsTab:AddSection("Other GUIs")
+SettingsTab:AddButton("Execute Toads GUI", function()
     loadstring(game:HttpGet('https://bit.ly/3x90l99'))('TOADS')
+end)
 
-end, true, true, 'Executes Toads GUI.')
-
-Toads:CreateButton('Execute Butter GUI', function()
-
-    SendUserNotice:Fire('BUTTER IS SKIDDED!\n\n Don\'t Use It.')
-
-end, true, true, 'Executes Butter GUI.')
-
-local GUIInfo = SettingsSection:CreateSubSection('GUI Information')
-
-GUIInfo:CreateLabel(string.format('Game Version: V%s', tostring(game.PlaceVersion)))
-GUIInfo:CreateLabel(string.format('Executor: %s', tostring(Executor)))
-
-local Ping, CPU, CurrentSlot
-Ping = GUIInfo:CreateLabel(string.format('Ping: %sms', math.floor(PerformanceStats.Ping:GetValue())))
-CPU = GUIInfo:CreateLabel(string.format('CPU: %sms', math.floor(PerformanceStats.CPU:GetValue())))
-
-CurrentSlot = GUIInfo:CreateLabel('')
-Connections[#Connections + 1] = {Name = 'Ping', Function = RunService.Stepped:Connect(function()
-
-    Ping:UpdateText(string.format('Ping: %sms', math.floor(PerformanceStats.Ping:GetValue())))
-    CPU:UpdateText(string.format('CPU: %sms', math.floor(PerformanceStats.CPU:GetValue())))
-    CurrentSlot:UpdateText(string.format('Current Loaded Slot: %s',  tostring((Ancestor:GetLoadedSlot() > 0 and Ancestor:GetLoadedSlot() or 'None'))))
-
-end)}
-
-local ConfigurationSettings = SettingsSection:CreateSubSection('Configuration Settings')
-ConfigurationSettings:CreateButton('Save Configuration', function()
-
-    Ancestor:SaveConfigurationFile()
-
-end, true, true, 'Saves Your Confiuration File')
-
-ConfigurationSettings:CreateButton('Delete Configuration', function()
-
-    Ancestor:DeleteConfigurationFile()
-    
-end, true, true, 'Deletes Your Confiuration File')
-
-ConfigurationSettings:CreateToggle('Autosave Configuration', false, function(State)
-
-    GUISettings.AutoSaveGUIConfiguration = State
-
-end, GUISettings.AutoSaveGUIConfiguration, true, 'Automatically Saves GUI Settings When Closed.')
-
-local PlotNameSettings = SettingsSection:CreateSubSection('Property Name Settings')
-
-for i = 1, 6 do 
-
-    PlotNameSettings:CreateTextbox(string.format('Slot %s Name', tostring(i)), function(Name)
-
-        SlotNames['Slot'..tostring(i)] = Name
-
-    end, SlotNames['Slot'..tostring(i)], false, true, string.format('Renames Slot %s To Your Preferred Name.', tostring(i)), true)
-
-end
-
-PlotNameSettings:CreateButton('Save Slot Names', function()
-        
-    Ancestor:SaveSlotNames()
-
-end, true, true, 'Saves Your Slot Names For The Current ROBLOX Account.')
-
-local Settings = SettingsSection:CreateSubSection('GUI Settings')
-
-Settings:CreateKeybind('Toggle UI', function(v)
-        
-    game.CoreGui.Ancestor.Enabled = not game.CoreGui.Ancestor.Enabled
-
-end, Enum.KeyCode.RightControl, true, 'Toggles UI Visibility.')
-
-Settings:CreateToggle('GUI Tips', false, function(State)
-
-    for _, Section in next, AncestorUI:GetHelpSections() do
-
-        Section.Visible = State
-
+-- ═══════════════════════════════════════════════════════════════════
+-- ACTIVATE FIRST TAB + OPEN ANIMATION
+-- ═══════════════════════════════════════════════════════════════════
+task.defer(function()
+    task.wait()
+    for _, t in pairs(Tabs) do
+        t.Page.Visible=false; t.Indicator.Visible=false
+        t.Button.BackgroundTransparency=1; t.Button.TextColor3=T.TextSec
     end
-
-end, true, true, 'Toggles GUI Tips.')
-
-Settings:CreateTitle('Dropdown Name Settings')
-
-Settings:CreateDropDown(function(Type)
-
-    PlayerDropType = Type
-    GUISettings.SelectedDropType = Type
-    PlayerDropType = GUISettings.SelectedDropType
-
-end, {
-    
-    'Both', 
-    'DisplayName', 
-    'UserName'
-
-}, GUISettings.SelectedDropType)
-
-Settings:CreateButton('Close GUI', function()
-
-    pcall(function()
-    
-        CoreGui.Ancestor:Destroy()
-
-    end)
-
-end, true, true, 'Closes Ancestor.')
-
-Connections.DestroyedGUI = {Function = CoreGui.ChildRemoved:Connect(function(Child)
-        
-    if tostring(Child):match('Ancestor') then
-        
-        Ancestor_Loaded = false
-        Ancestor.IsClientFlying = false
-        GUISettings.Fling = false
-        CoreGui.Stats:Destroy()
-        CoreGui.GUI:Destroy()
-
-        if Player.Character.Head:FindFirstChild('PointLight') then
-
-            return Player.Character.Head.PointLight:Destroy()
-
-        end
-
-        for _, Connection in next, Connections do 
-
-            pcall(function()
-            
-                Ancestor:GetConnection(_, true)
-
-            end)
-            
-        end
-        
+    if Tabs["Client"] then
+        local pt = Tabs["Client"]
+        pt.Page.Visible=true; pt.Indicator.Visible=true
+        pt.Button.BackgroundTransparency=0.82; pt.Button.TextColor3=T.TextPri
+        ActiveTab = pt
     end
-    
-end)}
+end)
+
+Main.Size=UDim2.new(0,0,0,0); Main.BackgroundTransparency=1
+TwF(Main,{BackgroundTransparency=0}); TwS(Main,{Size=UDim2.new(0,T.WinW,0,T.WinH)})
+
+print("[Ancestor Hub] Loaded — JofferHub UI + Ancestor backend | RightCtrl = toggle")
 
 Ancestor_Loaded = true
 
