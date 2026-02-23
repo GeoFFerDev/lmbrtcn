@@ -75,62 +75,52 @@ local function safeSuicide()
 end
 
 -- ───────────────────────────────────────────────────────
---  DUPE AXE  — correct sequence
---  The KEY insight: after firing 'Drop tool', the server spawns the
---  dropped axe as a Model inside workspace.PlayerModels.
---  We MUST wait for that model to actually appear (server confirmation)
---  before killing. Arbitrary task.wait timers are unreliable — we
---  watch PlayerModels.ChildAdded for the real signal.
+--  DUPE AXE — real logic
+--  In LT2, when you die with a tool EQUIPPED in your hand,
+--  the server automatically drops it into the world.
+--  Your save still has the axe, so respawn restores it.
+--  Walk to your land → pick up the dropped axe = duplicated.
+--
+--  Steps: Equip axe → confirm it's in hand → die → done.
 -- ───────────────────────────────────────────────────────
 local function dupeAxe()
-    local c = char()
-    local h = hum()
-    local r = root()
-    if not c or not h or not r then return notify('No character found!') end
+    local c  = char()
+    local h  = hum()
+    if not c or not h then return notify('No character!') end
 
-    -- Move any equipped axe to backpack first
-    h:UnequipTools()
-    task.wait(0.15)
-
-    -- Re-fetch after unequip (now all in backpack)
-    local axes = getAxes()
-    if #axes == 0 then return notify('No axes found in backpack!') end
-
-    local axe = axes[1]  -- dupe one axe at a time for reliability
-    local droppedModel = nil
-
-    -- Listen for the dropped axe appearing in workspace.PlayerModels
-    -- This is the ONLY reliable signal the server has processed the drop
-    local conn
-    conn = workspace.PlayerModels.ChildAdded:Connect(function(model)
-        if model:FindFirstChild('Owner') and model.Owner.Value == Player
-        and model:FindFirstChild('ToolName') then
-            droppedModel = model
-        end
-    end)
-
-    -- Fire the drop remote
-    ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame)
-
-    -- Wait for server confirmation (axe appears in PlayerModels)
-    -- Timeout after 4 seconds
-    local elapsed = 0
-    repeat
-        task.wait(0.05)
-        elapsed += 0.05
-    until droppedModel or elapsed >= 4
-
-    conn:Disconnect()
-
-    if not droppedModel then
-        return notify('Drop failed — equip the axe first and try again.')
+    -- Get first axe from backpack
+    local axe = nil
+    for _, v in ipairs(Player.Backpack:GetChildren()) do
+        if v:FindFirstChild('CuttingTool') then axe = v; break end
     end
 
-    -- Axe is confirmed in the world. Save still has it.
-    -- Kill NOW so respawn restores axe from save too.
-    h.Health = 0
+    -- If already equipped check character too
+    if not axe then
+        for _, v in ipairs(c:GetChildren()) do
+            if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe = v; break end
+        end
+    end
 
-    notify('Dupe done! Pick up the axe on the ground after you respawn.')
+    if not axe then return notify('No axe found! Buy one first.') end
+
+    -- Equip the axe into character hand
+    h:EquipTool(axe)
+
+    -- Wait until it's actually equipped (parented to character)
+    local waited = 0
+    repeat
+        task.wait(0.05)
+        waited += 0.05
+    until (c:FindFirstChildOfClass('Tool') ~= nil) or waited >= 3
+
+    if not c:FindFirstChildOfClass('Tool') then
+        return notify('Axe failed to equip — try again.')
+    end
+
+    -- Die with axe equipped → LT2 drops it into world automatically
+    -- Your save has it → respawn gives it back → pick up world axe = dupe
+    h.Health = 0
+    notify('Dupe fired! After respawn, go pick up your axe on the ground.')
 end
 
 -- ───────────────────────────────────────────────────────
@@ -666,20 +656,46 @@ end
 -- ─── DUPE ───────────────────────────────────────────────
 local Dp = pages['Dupe']
 
-Section(Dp, 'Dupe Axe')
-Hint(Dp, 'Have a save LOADED and your axe in backpack. Script drops the axe, waits for server confirmation, then kills you. Respawn restores axe from save — pick up the dropped one too.')
-Button(Dp, '🪓  Dupe Axe', function()
-    dupeAxe()
+Section(Dp, 'Save Info')
+
+-- Live label showing current loaded slot
+local slotLabel = inst('TextLabel', {
+    Text='Your Loaded Slot:  checking...',
+    Size=UDim2.new(1,0,0,36), BackgroundColor3=EL,
+    BackgroundTransparency=0, BorderSizePixel=0,
+    Font=Enum.Font.GothamBold, TextSize=13, TextColor3=TPRI,
+    TextXAlignment=Enum.TextXAlignment.Left, Parent=Dp
+})
+rnd(slotLabel); pad(slotLabel, 0,0,12,12)
+
+-- Refresh the label every second
+task.spawn(function()
+    while task.wait(1) do
+        pcall(function()
+            local slot = Player.CurrentSaveSlot.Value
+            local txt = (slot and slot > 0) and ('Your Loaded Slot:  '..tostring(slot)) or 'Your Loaded Slot:  None (load one!)'
+            slotLabel.Text = txt
+            slotLabel.TextColor3 = (slot and slot > 0) and ACCENT or Color3.fromRGB(220,100,80)
+        end)
+    end
 end)
 
-Section(Dp, 'Manual')
+Section(Dp, 'Dupe Axe')
+Hint(Dp, 'Load your save first. Script equips your axe then kills you — LT2 drops it in the world. Respawn restores it from save. Pick up the dropped axe = duplicated.')
+Button(Dp, '🪓  Dupe Axe', function()
+    task.spawn(dupeAxe)
+end)
+
+Section(Dp, 'Manual Controls')
 Button(Dp, 'Drop All Axes', function()
     local h = hum()
     if h then h:UnequipTools() end
     local axes = getAxes()
     if #axes == 0 then return notify('No axes found!') end
     for _, axe in ipairs(axes) do
-        dropAxe(axe); task.wait(0.12)
+        local r = root()
+        if r then ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame) end
+        task.wait(0.1)
     end
     notify('Dropped '..#axes..' axe(s).')
 end)
