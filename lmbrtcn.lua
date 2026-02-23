@@ -283,24 +283,31 @@ end
 
 function Ancestor:DropTools()
 
-Player.Character.Humanoid:UnequipTools()
-
-    if GUISettings.InstantDropAxes then 
-
-    Player.Character.Humanoid.Health = 0
-
-        return
-
-    end
+    Player.Character.Humanoid:UnequipTools()
 
     local Axes = self:GetAxes()
 
-    for i = 1, #Axes do 
+    -- Step 1: Drop ALL axes into the world first so the server registers them
+    for i = 1, #Axes do
 
         local Axe = Axes[i]
 
         self:DropTool(Axe)
-        Maid.Timer:Wait(.125)
+
+        -- Small gap so the server processes each drop remote before the next
+        Maid.Timer:Wait(0.1)
+
+    end
+
+    -- Step 2: If either dupe flag is active, die shortly after dropping
+    -- This is the trick: axes are already in the world when we die,
+    -- so they stay there AND we respawn with copies still in our inventory save
+    if GUISettings.InstantDropAxes or GUISettings.DropToolsAfterInventoryDuplication then
+
+        -- Brief buffer so the last drop remote is processed server-side
+        Maid.Timer:Wait(0.15)
+
+        self:SafeSuicide()
 
     end
 
