@@ -4954,11 +4954,12 @@ New("Frame", {
 })
 local TabListFrame = New("ScrollingFrame", {
     Size=UDim2.new(1,0,1,-6), Position=UDim2.new(0,0,0,6),
-    BackgroundTransparency=1, ScrollBarThickness=0,
+    BackgroundTransparency=1, ScrollBarThickness=2,
+    ScrollBarImageColor3=T.Accent,
     CanvasSize=UDim2.new(0,0,0,0),
     AutomaticCanvasSize=Enum.AutomaticSize.Y, Parent=Sidebar,
 })
-UIPad(TabListFrame,4,4,5,5); UIList(TabListFrame,nil,3)
+UIPad(TabListFrame,3,3,4,4); UIList(TabListFrame,nil,2)
 
 local Content = New("Frame", {
     Size=UDim2.new(1,-T.SidebarW,1,0),
@@ -5023,14 +5024,14 @@ local ActiveTab = nil
 
 local function CreateTab(name, icon)
     local btn = New("TextButton", {
-        Name=name, Size=UDim2.new(1,0,0,26),
+        Name=name, Size=UDim2.new(1,0,0,22),
         BackgroundColor3=T.ElementBG, BackgroundTransparency=1,
         Font=Enum.Font.Gotham, TextSize=11, TextColor3=T.TextSec,
         Text=(icon or "  ").."  "..name,
         TextXAlignment=Enum.TextXAlignment.Left,
         BorderSizePixel=0, Parent=TabListFrame,
     })
-    UICornerR(btn, T.SmallCorner); UIPad(btn,0,0,9,6)
+    UICornerR(btn, T.SmallCorner); UIPad(btn,0,0,7,6)
 
     local indicator = New("Frame", {
         Size=UDim2.new(0,3,0.55,0), Position=UDim2.new(0,0,0.225,0),
