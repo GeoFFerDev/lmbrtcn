@@ -4946,6 +4946,20 @@ VehicleTab:AddSlider("Car Speed", {Min=1, Max=5, Default=GUISettings.CarSpeed}, 
 VehicleTab:AddSlider("Car Pitch", {Min=1, Max=10, Default=GUISettings.CarPitch}, function(v) GUISettings.CarPitch = v end)
 VehicleTab:AddToggle("Activate Vehicle Mods", {Default=GUISettings.ActivateVehicleModifications}, function(v) GUISettings.ActivateVehicleModifications = v end)
 
+-- TROLL / SERVER TAB
+local TrollTab = CreateTab("Troll", "🤡")
+TrollTab:AddSection("Moderate Player")
+local allP2 = {}
+for _, p in ipairs(game:GetService('Players'):GetPlayers()) do if p ~= game:GetService('Players').LocalPlayer then table.insert(allP2, p.Name) end end
+if #allP2 == 0 then allP2 = {"(no other players)"} end
+TrollTab:AddDropdown("Target Player", {Options=allP2, Default=allP2[1]}, function(v) Ancestor.PlayerToModerate = game:GetService('Players'):FindFirstChild(v) end)
+TrollTab:AddDropdown("Action", {Options={'Kill', 'Hard Kill', 'Bring', 'Fling'}, Default='Kill'}, function(v) Ancestor.ModerationAction = v end)
+TrollTab:AddDropdown("Method", {Options={'Vehicle', 'Axe'}, Default='Vehicle'}, function(v) Ancestor.ModerationType = v end)
+TrollTab:AddButton("Execute Action", function() Ancestor:ModeratePlayer(Ancestor.ModerationAction) end)
+TrollTab:AddSection("Server Trolls")
+TrollTab:AddToggle("Close All Store Doors", {Default=false}, function(v) GUISettings.CloseStores = v; Ancestor:CloseStores() end)
+TrollTab:AddToggle("Stop Players Loading", {Default=false}, function(v) GUISettings.StopPlayersLoading = v end)
+
 -- WORLD TAB
 local WorldTab = CreateTab("World", "🌍")
 WorldTab:AddSection("Lighting")
@@ -4967,3 +4981,4 @@ Main.Size=UDim2.new(0,0,0,0); Main.BackgroundTransparency=1
 TwF(Main,{BackgroundTransparency=0}); TwS(Main,{Size=UDim2.new(0,T.WinW,0,T.WinH)})
 Ancestor_Loaded = true
 print("[JofferHub + Ancestor V2 FULL Logic] Built Successfully!")
+
