@@ -4762,7 +4762,7 @@ local T = {
     Separator    = Color3.fromRGB(30,  40,  58),
     Corner       = UDim.new(0, 7),
     SmallCorner  = UDim.new(0, 5),
-    SidebarW     = 122,
+    SidebarW     = 126,
     RowH         = 30,
     WinW         = 420,
     WinH         = 360,
@@ -4954,8 +4954,10 @@ New("Frame", {
 })
 local TabListFrame = New("ScrollingFrame", {
     Size=UDim2.new(1,0,1,-6), Position=UDim2.new(0,0,0,6),
-    BackgroundTransparency=1, ScrollBarThickness=2,
+    BackgroundTransparency=1, ScrollBarThickness=3,
     ScrollBarImageColor3=T.Accent,
+    ScrollingDirection=Enum.ScrollingDirection.Y,
+    ElasticBehavior=Enum.ElasticBehavior.Never,
     CanvasSize=UDim2.new(0,0,0,0),
     AutomaticCanvasSize=Enum.AutomaticSize.Y, Parent=Sidebar,
 })
