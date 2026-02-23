@@ -1,1621 +1,664 @@
--- =========================================================
--- Butter Hub - Lumber Tycoon 2 Script
--- Reconstructed from MoonSec V3 bytecode analysis
--- Credits: Applebox, silentben8x, tip
--- Discord: https://discord.gg/butterhub
--- =========================================================
--- "Lumber Tycoon came out 15 years ago"
--- =========================================================
+-- Credits To Script Founder
+-- Gui Made By: Script Hunter - Anwarun
+-- Subscribe: AnwarunYt
 
-local Players         = game:GetService("Players")
-local RunService      = game:GetService("RunService")
-local UserInputService= game:GetService("UserInputService")
-local TweenService    = game:GetService("TweenService")
-local HttpService     = game:GetService("HttpService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Workspace       = game:GetService("Workspace")
-
-local LocalPlayer  = Players.LocalPlayer
-local Character    = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-local Humanoid     = Character:WaitForChild("Humanoid")
-local RootPart     = Character:WaitForChild("HumanoidRootPart")
-local Camera       = Workspace.CurrentCamera
-
--- =========================================================
--- EXECUTOR DETECTION
--- =========================================================
-
-local executor = "Unknown"
-local isSolara = false
-
-if identifyexecutor then
-    executor = identifyexecutor()
-    isSolara = executor:lower():find("solara") ~= nil
-elseif getexecutorname then
-    executor = getexecutorname()
+Mouse = game.Players.LocalPlayer:GetMouse()
+ 
+Client = game.ReplicatedStorage.Interaction.ClientSetListPlayer
+players = game.Players
+for i, v in pairs(players:GetPlayers()) do
+	if v.Name ~= players.LocalPlayer.Name then
+		Client:InvokeServer(players.LocalPlayer.BlacklistFolder, v, true)
+	end
 end
-
--- =========================================================
--- FILE / SETTINGS HELPERS
--- =========================================================
-
-local SETTINGS_FILE  = "ButterSSlotNames.cfg"
-local EXECUTOR_FILE  = "expthingy.txt"
-local SLOT_COUNT     = 6
-
-local SaveSlotNames  = {"Slot 1","Slot 2","Slot 3","Slot 4","Slot 5","Slot 6"}
-local SSlot1, SSlot2, SSlot3, SSlot4, SSlot5, SSlot6 = nil,nil,nil,nil,nil,nil
-local Slot2, Slot4Val, Slot5, Slot6 = nil,nil,nil,nil
-local Slot4 = nil
-
-local function saveSettings()
-    if isfile and writefile then
-        local data = HttpService:JSONEncode({
-            SlotNames = SaveSlotNames,
-            Walkspeed = Humanoid.WalkSpeed,
-            JumpPower = Humanoid.JumpPower,
-        })
-        writefile(SETTINGS_FILE, data)
-        print("Configuration loaded successfully.")
-    end
-end
-
-local function loadSettings()
-    if isfile and isfile(SETTINGS_FILE) then
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(readfile(SETTINGS_FILE))
-        end)
-        if ok and data then
-            SaveSlotNames = data.SlotNames or SaveSlotNames
-        else
-            print("Configuration file error. Fixing...")
-            saveSettings()
-        end
-    end
-end
-
-local function setSlotTo(slot, name)
-    SaveSlotNames[slot] = name
-    saveSettings()
-end
-
-local function loadSlot(slot)
-    return SaveSlotNames[slot]
-end
-
-loadSettings()
-
--- =========================================================
--- UTILITY
--- =========================================================
-
-local function notify(msg, dur)
-    game:GetService("StarterGui"):SetCore("SendNotification",{
-        Title = "Butter Hub",
-        Text  = msg,
-        Duration = dur or 3,
-    })
-end
-
-local function sendUserNotice(msg)
-    pcall(function()
-        ReplicatedStorage.DefaultChatSystemChatEvents.SayMessageRequest:FireServer(msg,"All")
-    end)
-end
-
-local function clampVector3(v, min, max)
-    return Vector3.new(
-        math.clamp(v.X, min, max),
-        math.clamp(v.Y, min, max),
-        math.clamp(v.Z, min, max)
-    )
-end
-
-local function getPosition(obj)
-    if obj:IsA("Model") then
-        return obj:GetModelCFrame()
-    end
-    return obj.CFrame
-end
-
-local function getCFrame(obj)
-    return obj.CFrame
-end
-
-local function countitems(parent)
-    local n = 0
-    for _,v in pairs(parent:GetChildren()) do n = n + 1 end
-    return n
-end
-
-local function getCounter()
-    return #Players:GetPlayers()
-end
-
-local function getPing()
-    return math.floor(LocalPlayer:GetNetworkPing() * 1000)
-end
-
--- =========================================================
--- FEATURE STATE
--- =========================================================
-
-local Flags = {
-    NoClip         = false,
-    InfiniteJump   = false,
-    GodMode        = false,
-    FLYING         = false,
-    BetterFly      = false,
-    ClickToTP      = false,
-    AutoBuild      = false,
-    AutoBuild2     = false,
-    AutoBuild4     = false,
-    AutoBuyg       = false,
-    SellAllLogs    = false,
-    GrabShopItems  = false,
-    LogModels      = false,
-    NoFog          = false,
-    BetterGraphics = false,
-    Night          = false,
-    AutoFill       = false,
-    VehicleSpawner = false,
-    FreeLand       = false,
-    Sorter         = false,
-    InfiniteHrp    = false,
-    QEfly          = false,
-    SelectionTp    = false,
-    carTP          = false,
-    orbitFunc      = false,
-}
-
-local Settings = {
-    Walkspeed      = 16,
-    JumpPower      = 50,
-    FlySpeed       = 50,
-    FOV            = 70,
-    SSpeed         = 1,
-    OrbitSpeed     = 1,
-    FlyKey         = Enum.KeyCode.E,
-    LeftShift      = false,
-    RightShift     = false,
-    Y_Sensitivity  = 1,
-    theme          = "Default",
-    distanceSlider = 50,
-    Infeaxerange   = 10,
-}
-
--- =========================================================
--- MOVEMENT
--- =========================================================
-
--- NoClip
-RunService.Stepped:Connect(function()
-    if Flags.NoClip then
-        for _,part in pairs(Character:GetDescendants()) do
-            if part:IsA("BasePart") then
-                part.CanCollide = false
-            end
-        end
-    end
+players.PlayerAdded:connect(function(plr)
+	Client:InvokeServer(players.LocalPlayer.BlacklistFolder, plr, true)
 end)
 
--- Infinite Jump
-UserInputService.JumpRequest:Connect(function()
-    if Flags.InfiniteJump then
-        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-    end
-end)
-
--- God Mode
-local function setGodMode(enabled)
-    Flags.GodMode = enabled
-    if enabled then
-        Humanoid.MaxHealth = math.huge
-        Humanoid.Health    = math.huge
-    end
-end
-
--- Walkspeed
-local function setWalkspeed(val)
-    Settings.Walkspeed = val
-    Humanoid.WalkSpeed = val
-end
-
--- Jump Power
-local function setJumpPower(val)
-    Settings.JumpPower = val
-    Humanoid.JumpPower = val
-end
-
--- =========================================================
--- FLY SYSTEM (QEfly / BetterFly)
--- =========================================================
-
-local flyConnection
-local flyBodyVelocity
-local flyBodyGyro
-
-local function startFly()
-    if Flags.FLYING then return end
-    Flags.FLYING = true
-
-    flyBodyVelocity = Instance.new("BodyVelocity")
-    flyBodyVelocity.Velocity    = Vector3.new(0,0,0)
-    flyBodyVelocity.MaxForce    = Vector3.new(1e9,1e9,1e9)
-    flyBodyVelocity.Parent      = RootPart
-
-    flyBodyGyro = Instance.new("BodyGyro")
-    flyBodyGyro.MaxTorque       = Vector3.new(1e9,1e9,1e9)
-    flyBodyGyro.CFrame          = RootPart.CFrame
-    flyBodyGyro.Parent          = RootPart
-
-    flyConnection = RunService.Heartbeat:Connect(function()
-        if not Flags.FLYING then
-            flyBodyVelocity:Destroy()
-            flyBodyGyro:Destroy()
-            flyConnection:Disconnect()
-            return
-        end
-        local dir = Vector3.new(0,0,0)
-        local spd = Settings.FlySpeed
-        if UserInputService:IsKeyDown(Enum.KeyCode.W) then
-            dir = dir + Camera.CFrame.LookVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.S) then
-            dir = dir - Camera.CFrame.LookVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.A) then
-            dir = dir - Camera.CFrame.RightVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.D) then
-            dir = dir + Camera.CFrame.RightVector
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.Space) then
-            dir = dir + Vector3.new(0,1,0)
-        end
-        if UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
-            dir = dir - Vector3.new(0,1,0)
-        end
-        flyBodyVelocity.Velocity = dir.Magnitude > 0
-            and dir.Unit * spd
-            or  Vector3.new(0,0,0)
-        flyBodyGyro.CFrame = Camera.CFrame
-    end)
-end
-
-local function stopFly()
-    Flags.FLYING = false
-end
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if input.KeyCode == Settings.FlyKey then
-        if Flags.FLYING then stopFly() else startFly() end
-    end
-end)
-
--- =========================================================
--- TELEPORTS
--- =========================================================
-
-local LOCATIONS = {
-    ["Free Land"]       = CFrame.new(230, 10, 170),
-    ["Wood Dropoff"]    = CFrame.new(-68, 4, -137),
-    ["The Swamp"]       = CFrame.new(-1300, 26, 830),
-    ["Cherry Meadow"]   = CFrame.new(820, 8, 920),
-    ["Snow Biome"]      = CFrame.new(-1083, 115, -1274),
-    ["EndTimes Cave"]   = CFrame.new(490, -188, 1430),
-    ["LoneCave"]        = CFrame.new(-1070, 65, -210),
-    ["The Den"]         = CFrame.new(-570, 30, -1200),
-    ["Bob's Shack"]     = CFrame.new(-5, 5, 700),
-    ["Fancy Furnishings"] = CFrame.new(-300, 3, -118),
-    ["WoodRUs"]         = CFrame.new(316, 3, -143),
-    ["CarStore"]        = CFrame.new(380, 3, 70),
-    ["Bridge"]          = CFrame.new(-85, 10, 430),
-    ["Toll Bridge"]     = CFrame.new(-85, 8, 380),
-    ["Ferry Ticket"]    = CFrame.new(-200, 7, 420),
-    ["Strange Man"]     = CFrame.new(230, 65, -1170),
-    ["Cave"]            = CFrame.new(170, -10, 880),
-    ["Admin Teleport"]  = CFrame.new(500, 50, -500),
-}
-
-local function teleportTo(cf)
-    RootPart.CFrame = cf
-end
-
-local function teleportToPlayer(target)
-    if target and target.Character and target.Character:FindFirstChild("HumanoidRootPart") then
-        RootPart.CFrame = target.Character.HumanoidRootPart.CFrame + Vector3.new(3,0,0)
-    end
-end
-
-local function teleportToBase(plr)
-    plr = plr or LocalPlayer
-    local plot = Workspace:FindFirstChild("PlayerPlots")
-    if plot then
-        local base = plot:FindFirstChild(plr.Name)
-        if base then
-            RootPart.CFrame = base:GetModelCFrame() + Vector3.new(0,5,0)
-        end
-    end
-end
-
-local function teleportVehicleToPlayer(target)
-    if not target then return end
-    local vehicle = Workspace:FindFirstChild("Vehicles")
-    if vehicle then
-        local myVehicle = vehicle:FindFirstChild(LocalPlayer.Name)
-        if myVehicle and target.Character then
-            myVehicle:SetPrimaryPartCFrame(
-                target.Character.HumanoidRootPart.CFrame + Vector3.new(5,0,0)
-            )
-        end
-    end
-end
-
--- =========================================================
--- PLAYER ACTIONS
--- =========================================================
-
-local function killPlayer(target)
-    if target and target.Character then
-        local hum = target.Character:FindFirstChildOfClass("Humanoid")
-        if hum then hum.Health = 0 end
-    end
-end
-
-local function sitInAnyVehicle()
-    for _,v in pairs(Workspace:GetDescendants()) do
-        if v:IsA("VehicleSeat") then
-            v:Sit(Humanoid)
-            break
-        end
-    end
-end
-
-local function serverHop()
-    local servers = {}
-    local ok, result = pcall(function()
-        return HttpService:JSONDecode(
-            game:HttpGet("https://games.roblox.com/v1/games/"..game.PlaceId.."/servers/Public?limit=100")
-        )
-    end)
-    if ok and result and result.data then
-        for _,srv in pairs(result.data) do
-            if srv.id ~= game.JobId and srv.playing < srv.maxPlayers then
-                table.insert(servers, srv.id)
-            end
-        end
-        if #servers > 0 then
-            game:GetService("TeleportService"):TeleportToPlaceInstance(
-                game.PlaceId, servers[math.random(1,#servers)]
-            )
-        end
-    end
-end
-
-local function dropTools()
-    for _,tool in pairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):UnequipTools()
-            tool.Parent = Workspace
-        end
-    end
-end
-
-local function dropOwner()
-    local re = ReplicatedStorage:FindFirstChild("DropOwner")
-    if re then re:FireServer() end
-end
-
--- =========================================================
--- AUTO BUILD
--- =========================================================
-
-local autoBuildEnabled = false
-local autoBuildPlot    = nil
-
-local function makeAutoBuildUI()
-    -- placeholder - connects to plotDD dropdown
-end
-
-local function buildOnPlot(plot)
-    if not plot then return end
-    local structures = ReplicatedStorage:FindFirstChild("ClientPlacedStructure")
-    if structures then
-        for _,s in pairs(structures:GetChildren()) do
-            local re = ReplicatedStorage:FindFirstChild("PlaceStructure")
-            if re then
-                re:FireServer(s, plot)
-                wait(0.1)
-            end
-        end
-    end
-end
-
-local function buildOntoPlayersPlot(target)
-    if target then
-        local plot = Workspace.PlayerPlots:FindFirstChild(target.Name)
-        buildOnPlot(plot)
-    end
-end
-
--- =========================================================
--- WOOD / SAWMILL
--- =========================================================
-
-local WOOD_TYPES = {"Birch","Cherry","Koa","Fir","Walnut","Palm","Spooky"}
-
-local function sawmillTree(woodType)
-    local sawmill = Workspace:FindFirstChild("Sawmill")
-    if sawmill then
-        local re = ReplicatedStorage:FindFirstChild("SawmillLog")
-        if re then re:FireServer(woodType) end
-    end
-end
-
-local function selectSawmill(woodType)
-    sawmillTree(woodType)
-end
-
-local function modSawmill(speed)
-    local sawmill = Workspace:FindFirstChild("Sawmill")
-    if sawmill then
-        local motor = sawmill:FindFirstChild("MotorSpeed")
-        if motor then motor.Value = speed end
-    end
-end
-
-local function treeCut(tree)
-    local re = ReplicatedStorage:FindFirstChild("treeCut")
-    if re then re:FireServer(tree) end
-end
-
-local function treeCutNoRequire(tree)
-    treeCut(tree)
-end
-
-local function viewEndTree()
-    local trees = Workspace:FindFirstChild("TreeRegion")
-    if trees then
-        for _,t in pairs(trees:GetChildren()) do
-            if t.Name:find("Spooky") or t.Name:find("Zombie") then
-                RootPart.CFrame = t:GetModelCFrame() + Vector3.new(0,5,0)
-                return
-            end
-        end
-    end
-end
-
--- =========================================================
--- ITEM / SHOP
--- =========================================================
-
-local function grabShopItems()
-    local shop = Workspace:FindFirstChild("WoodRUs") or Workspace:FindFirstChild("Fancy Furnishings")
-    if shop then
-        for _,item in pairs(shop:GetDescendants()) do
-            if item:IsA("Tool") or item:IsA("Part") then
-                item.Parent = LocalPlayer.Backpack
-            end
-        end
-    end
-end
-
-local function purchaseAllBlueprints()
-    local re = ReplicatedStorage:FindFirstChild("SelectPurchase")
-    if re then
-        local shop = Workspace:FindFirstChild("PropertyPurchasingClient")
-        if shop then
-            for _,bp in pairs(shop:GetChildren()) do
-                re:FireServer(bp)
-                wait(0.2)
-            end
-        end
-    end
-end
-
-local function sellAllLogs()
-    local re = ReplicatedStorage:FindFirstChild("SellAllLogs")
-    if re then
-        re:FireServer()
-    end
-end
-
-local function getToolStats()
-    local tools = LocalPlayer.Backpack:GetChildren()
-    for _,tool in pairs(tools) do
-        if tool:IsA("Tool") then
-            print(tool.Name, tool:GetAttributes())
-        end
-    end
-end
-
-local function getToolsfix()
-    -- Re-equips dropped tools back to backpack
-    for _,v in pairs(Workspace:GetDescendants()) do
-        if v:IsA("Tool") and v:GetAttribute("Owner") == LocalPlayer.UserId then
-            v.Parent = LocalPlayer.Backpack
-        end
-    end
-end
-
-local function getBestAxe()
-    local best, bestPower = nil, 0
-    for _,tool in pairs(LocalPlayer.Backpack:GetChildren()) do
-        if tool:IsA("Tool") and tool:GetAttribute("AxePower") then
-            local power = tool:GetAttribute("AxePower")
-            if power > bestPower then
-                best, bestPower = tool, power
-            end
-        end
-    end
-    return best
-end
-
-local function stealBps()
-    local re = ReplicatedStorage:FindFirstChild("GetToolsfix")
-    for _,plr in pairs(Players:GetPlayers()) do
-        if plr ~= LocalPlayer then
-            local char = plr.Character
-            if char then
-                for _,tool in pairs(char:GetChildren()) do
-                    if tool:IsA("Tool") then
-                        tool.Parent = LocalPlayer.Backpack
-                    end
-                end
-            end
-        end
-    end
-end
-
--- =========================================================
--- LAND / PROPERTY
--- =========================================================
-
-local function freeLand()
-    local re = ReplicatedStorage:FindFirstChild("FreeLand")
-    if re then re:FireServer() end
-end
-
-local function copyBase(target)
-    local plot = Workspace.PlayerPlots:FindFirstChild(target and target.Name or LocalPlayer.Name)
-    if plot then
-        local copy = plot:Clone()
-        copy.Parent = Workspace
-    end
-end
-
-local function selectLand()
-    local re = ReplicatedStorage:FindFirstChild("Select Land")
-    if re then re:FireServer() end
-end
-
-local function toggleShopDoors()
-    local shops = {"WoodRUs","Fancy Furnishings","CarStore"}
-    for _,shopName in pairs(shops) do
-        local shop = Workspace:FindFirstChild(shopName)
-        if shop then
-            for _,door in pairs(shop:GetDescendants()) do
-                if door.Name == "Door" and door:IsA("Part") then
-                    door.Transparency = door.Transparency > 0 and 0 or 1
-                    door.CanCollide = not door.CanCollide
-                end
-            end
-        end
-    end
-end
-
--- =========================================================
--- DUPE SYSTEM
--- =========================================================
-
-local function dupeInventory()
-    for _,tool in pairs(LocalPlayer.Backpack:GetChildren()) do
-        local clone = tool:Clone()
-        clone.Parent = LocalPlayer.Backpack
-    end
-end
-
-local function copyFunc(func)
-    -- Copies a function reference
-    return func
-end
-
--- =========================================================
--- VEHICLE
--- =========================================================
-
-local function startVehicleSpawner()
-    local re = ReplicatedStorage:FindFirstChild("VehicleSpawner")
-    if re then re:FireServer() end
-end
-
-local function sortPlayer(plr)
-    if plr and plr.Character then
-        RootPart.CFrame = plr.Character.HumanoidRootPart.CFrame
-    end
-end
-
--- =========================================================
--- VISUAL
--- =========================================================
-
-local originalFog      = nil
-local lightingService  = game:GetService("Lighting")
-
-local function setNoFog(enabled)
-    Flags.NoFog = enabled
-    if enabled then
-        originalFog = lightingService.FogEnd
-        lightingService.FogEnd = 1e9
-        lightingService.FogStart = 1e9
-    elseif originalFog then
-        lightingService.FogEnd   = originalFog
-        lightingService.FogStart = 0
-    end
-end
-
-local function setNight(enabled)
-    Flags.Night = enabled
-    lightingService.ClockTime = enabled and 0 or 14
-end
-
-local function betterGraphics(enabled)
-    Flags.BetterGraphics = enabled
-    if enabled then
-        game:GetService("Workspace").StreamingEnabled = false
-        settings().Rendering.QualityLevel = 21
-    end
-end
-
-local function setFOV(val)
-    Settings.FOV = val
-    Camera.FieldOfView = val
-end
-
--- =========================================================
--- ORBIT SYSTEM
--- =========================================================
-
-local orbitTarget = nil
-local orbitConnection = nil
-
-local function updateOrbit()
-    if not orbitTarget or not orbitTarget.Character then return end
-    local angle = tick() * Settings.OrbitSpeed
-    local radius = Settings.distanceSlider
-    local targetPos = orbitTarget.Character.HumanoidRootPart.Position
-    RootPart.CFrame = CFrame.new(
-        targetPos + Vector3.new(math.cos(angle)*radius, 5, math.sin(angle)*radius),
-        targetPos
-    )
-end
-
-local function startOrbit(target)
-    orbitTarget = target
-    Flags.orbitFunc = true
-    orbitConnection = RunService.Heartbeat:Connect(function()
-        if Flags.orbitFunc then
-            updateOrbit()
-        else
-            orbitConnection:Disconnect()
-        end
-    end)
-end
-
--- =========================================================
--- AUTO BUY
--- =========================================================
-
-local autoBuyRunning = false
-
-local function autoBuy(item)
-    autoBuyRunning = true
-    spawn(function()
-        while autoBuyRunning do
-            local re = ReplicatedStorage:FindFirstChild("AutoBuyg")
-            if re then re:FireServer(item) end
-            wait(1)
-        end
-    end)
-end
-
--- =========================================================
--- SORTER
--- =========================================================
-
-local function sorterTab1()
-    local logs = Workspace:FindFirstChild("LogModels")
-    if logs then
-        local sorted = {}
-        for _,log in pairs(logs:GetChildren()) do
-            local woodType = log:GetAttribute("WoodType") or "Unknown"
-            sorted[woodType] = sorted[woodType] or {}
-            table.insert(sorted[woodType], log)
-        end
-        local x = 0
-        for woodType, group in pairs(sorted) do
-            for i,log in pairs(group) do
-                log:SetPrimaryPartCFrame(CFrame.new(x, 5, i * 8))
-            end
-            x = x + 12
-        end
-    end
-end
-
--- =========================================================
--- MISC
--- =========================================================
-
-local function sendNotification(msg)
-    notify(msg)
-end
-
-local function spawnPart()
-    local part = Instance.new("Part")
-    part.Size = Vector3.new(4,1,4)
-    part.Anchored = true
-    part.CFrame = RootPart.CFrame * CFrame.new(0,-3,0)
-    part.Parent = Workspace
-end
-
-local function logModels()
-    for _,v in pairs(Workspace:GetDescendants()) do
-        if v:IsA("Model") and v:GetAttribute("WoodType") then
-            print(v.Name, v:GetAttribute("WoodType"))
-        end
-    end
-end
-
-local function deselect()
-    local re = ReplicatedStorage:FindFirstChild("delallselections")
-    if re then re:FireServer() end
-end
-
-local function abort()
-    Flags.AutoBuild  = false
-    Flags.AutoBuyg   = false
-    autoBuyRunning   = false
-end
-
-local function getMikeTp()
-    -- Teleport to "Mike" (admin) location
-    teleportTo(CFrame.new(500,50,-500))
-end
-
-local function infHrp()
-    Flags.InfiniteHrp = not Flags.InfiniteHrp
-    if Flags.InfiniteHrp then
-        spawn(function()
-            while Flags.InfiniteHrp do
-                RootPart.Anchored = true
-                wait(0.1)
-                RootPart.Anchored = false
-                wait(0.1)
-            end
-        end)
-    end
-end
-
--- =========================================================
--- UI SYSTEM
--- =========================================================
-
--- Remove existing GUI
-if LocalPlayer.PlayerGui:FindFirstChild("ButterHub") then
-    LocalPlayer.PlayerGui.ButterHub:Destroy()
-end
-
-local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "ButterHub"
-ScreenGui.ResetOnSpawn = false
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = LocalPlayer.PlayerGui
-
--- Loading screen
-local LoadingScreen = Instance.new("Frame")
-LoadingScreen.Name = "LoadingScreen"
-LoadingScreen.Size = UDim2.new(1,0,1,0)
-LoadingScreen.Position = UDim2.new(0,0,0,0)
-LoadingScreen.BackgroundColor3 = Color3.fromRGB(20,20,30)
-LoadingScreen.BorderSizePixel = 0
-LoadingScreen.Parent = ScreenGui
-
-local loadLabel = Instance.new("TextLabel")
-loadLabel.Size = UDim2.new(0,400,0,60)
-loadLabel.Position = UDim2.new(0.5,-200,0.5,-30)
-loadLabel.BackgroundTransparency = 1
-loadLabel.Font = Enum.Font.GothamBold
-loadLabel.TextSize = 28
-loadLabel.TextColor3 = Color3.fromRGB(255,215,0)
-loadLabel.Text = "Butter Hub"
-loadLabel.Parent = LoadingScreen
-
-local loadSub = Instance.new("TextLabel")
-loadSub.Size = UDim2.new(0,400,0,30)
-loadSub.Position = UDim2.new(0.5,-200,0.5,35)
-loadSub.BackgroundTransparency = 1
-loadSub.Font = Enum.Font.Gotham
-loadSub.TextSize = 14
-loadSub.TextColor3 = Color3.fromRGB(200,200,200)
-loadSub.Text = "Loading sequence..."
-loadSub.Parent = LoadingScreen
-
-task.delay(2, function()
-    TweenService:Create(LoadingScreen, TweenInfo.new(0.5), {BackgroundTransparency=1}):Play()
-    task.delay(0.5, function()
-        LoadingScreen:Destroy()
-    end)
-end)
-
--- =========================================================
--- MAIN WINDOW
--- =========================================================
-
-local Main = Instance.new("Frame")
-Main.Name = "Main"
-Main.Size = UDim2.new(0,570,0,420)
-Main.Position = UDim2.new(0.5,-285,0.5,-210)
-Main.BackgroundColor3 = Color3.fromRGB(25,25,35)
-Main.BorderSizePixel = 0
-Main.Active = true
-Main.Draggable = true
-Main.Parent = ScreenGui
-
-local UICorner = Instance.new("UICorner")
-UICorner.CornerRadius = UDim.new(0,8)
-UICorner.Parent = Main
-
--- Drop shadow holder
-local DropShadowHolder = Instance.new("Frame")
-DropShadowHolder.Name = "DropShadowHolder"
-DropShadowHolder.Size = UDim2.new(1,20,1,20)
-DropShadowHolder.Position = UDim2.new(0,-10,0,-10)
-DropShadowHolder.BackgroundColor3 = Color3.fromRGB(0,0,0)
-DropShadowHolder.BackgroundTransparency = 0.7
-DropShadowHolder.BorderSizePixel = 0
-DropShadowHolder.ZIndex = 0
-DropShadowHolder.Parent = Main
-local UICorner_2 = Instance.new("UICorner")
-UICorner_2.CornerRadius = UDim.new(0,12)
-UICorner_2.Parent = DropShadowHolder
-
--- Title bar
-local TitleBar = Instance.new("Frame")
-TitleBar.Size = UDim2.new(1,0,0,40)
-TitleBar.BackgroundColor3 = Color3.fromRGB(30,30,45)
-TitleBar.BorderSizePixel = 0
-TitleBar.Parent = Main
-local UICorner3 = Instance.new("UICorner")
-UICorner3.CornerRadius = UDim.new(0,8)
-UICorner3.Parent = TitleBar
-
-local UIGradient = Instance.new("UIGradient")
-UIGradient.Color = ColorSequence.new({
-    ColorSequenceKeypoint.new(0, Color3.fromRGB(255,215,0)),
-    ColorSequenceKeypoint.new(1, Color3.fromRGB(255,140,0)),
-})
-UIGradient.Rotation = 90
-UIGradient.Parent = TitleBar
-
+-- Objects
+
+local plr = game:GetService('Players').LocalPlayer.Character
+local Lt2 = Instance.new("ScreenGui")
+local Frame = Instance.new("Frame")
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1,-50,1,0)
-Title.Position = UDim2.new(0,10,0,0)
-Title.BackgroundTransparency = 1
+local Walk = Instance.new("TextButton")
+local Dupe = Instance.new("TextButton")
+local Tpwood = Instance.new("TextButton")
+local GoldAxe = Instance.new("TextButton")
+local Jump = Instance.new("TextButton")
+local WallHax = Instance.new("TextButton")
+local Teleportt = Instance.new("TextButton")
+local Wnum = Instance.new("TextBox")
+local Jnum = Instance.new("TextBox")
+local Tpframe = Instance.new("Frame")
+local Tittle = Instance.new("TextLabel")
+local LolF = Instance.new("ScrollingFrame")
+local plot = Instance.new("TextButton")
+local woodrus = Instance.new("TextButton")
+local spawn = Instance.new("TextButton")
+local volcano = Instance.new("TextButton")
+local swamp = Instance.new("TextButton")
+local palm = Instance.new("TextButton")
+local cave = Instance.new("TextButton")
+local cars = Instance.new("TextButton")
+local strangemen = Instance.new("TextButton")
+local theden = Instance.new("TextButton")
+local Color = Instance.new("Frame")
+local titttle = Instance.new("TextLabel")
+local Grey = Instance.new("TextButton")
+local Phantom = Instance.new("TextButton")
+local Spooky = Instance.new("TextButton")
+local Blue = Instance.new("TextButton")
+local LightSpooky = Instance.new("TextButton")
+local X = Instance.new("TextButton")
+
+-- Properties
+
+Lt2.Name = "Lt2"
+Lt2.Parent = game.CoreGui
+Lt2.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+Frame.Parent = Lt2
+Frame.Active = true
+Frame.Draggable = true
+Frame.BackgroundColor3 = Color3.new(0, 0, 0)
+Frame.BackgroundTransparency = 0.10000000149012
+Frame.Position = UDim2.new(0.225425944, 0, 0.291505814, 0)
+Frame.Size = UDim2.new(0, 419, 0, 216)
+
+Title.Name = "Title"
+Title.Parent = Frame
+Title.BackgroundColor3 = Color3.new(1, 1, 1)
+Title.BorderColor3 = Color3.new(1, 1, 1)
+Title.BorderSizePixel = 2
+Title.Size = UDim2.new(0, 419, 0, 23)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 16
-Title.TextColor3 = Color3.fromRGB(255,255,255)
-Title.TextXAlignment = Enum.TextXAlignment.Left
-Title.Text = "🧈 Butter Hub  •  Lumber Tycoon 2  •  " .. executor
-Title.Parent = TitleBar
+Title.Text = "Lt2 Gui"
+Title.TextColor3 = Color3.new(0, 0, 0)
+Title.TextSize = 20
 
--- Close / Toggle UI button
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Size = UDim2.new(0,30,0,30)
-ToggleBtn.Position = UDim2.new(1,-35,0,5)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(200,50,50)
-ToggleBtn.Font = Enum.Font.GothamBold
-ToggleBtn.TextSize = 16
-ToggleBtn.Text = "X"
-ToggleBtn.TextColor3 = Color3.fromRGB(255,255,255)
-ToggleBtn.BorderSizePixel = 0
-ToggleBtn.Parent = TitleBar
-Instance.new("UICorner",ToggleBtn).CornerRadius = UDim.new(0,4)
-ToggleBtn.MouseButton1Click:Connect(function()
-    Main.Visible = not Main.Visible
+Walk.Name = "Walk"
+Walk.Parent = Frame
+Walk.BackgroundColor3 = Color3.new(1, 1, 1)
+Walk.Position = UDim2.new(0.0238663331, 0, 0.833333373, 0)
+Walk.Size = UDim2.new(0, 154, 0, 28)
+Walk.Font = Enum.Font.GothamBold
+Walk.Text = "Walk Speed"
+Walk.TextColor3 = Color3.new(0, 0, 0)
+Walk.TextSize = 20
+
+Dupe.Name = "Dupe"
+Dupe.Parent = Frame
+Dupe.BackgroundColor3 = Color3.new(1, 1, 1)
+Dupe.Position = UDim2.new(0.050119333, 0, 0.152777776, 0)
+Dupe.Size = UDim2.new(0, 375, 0, 26)
+Dupe.Font = Enum.Font.GothamBold
+Dupe.Text = "Dupe"
+Dupe.TextColor3 = Color3.new(0, 0, 0)
+Dupe.TextSize = 20
+
+Tpwood.Name = "Tpwood"
+Tpwood.Parent = Frame
+Tpwood.BackgroundColor3 = Color3.new(1, 1, 1)
+Tpwood.Position = UDim2.new(0.050119333, 0, 0.310185194, 0)
+Tpwood.Size = UDim2.new(0, 176, 0, 28)
+Tpwood.Font = Enum.Font.GothamBold
+Tpwood.Text = "Bring Wood"
+Tpwood.TextColor3 = Color3.new(0, 0, 0)
+Tpwood.TextSize = 20
+
+GoldAxe.Name = "GoldAxe"
+GoldAxe.Parent = Frame
+GoldAxe.BackgroundColor3 = Color3.new(1, 1, 1)
+GoldAxe.Position = UDim2.new(0.52505964, 0, 0.310185194, 0)
+GoldAxe.Size = UDim2.new(0, 176, 0, 28)
+GoldAxe.Font = Enum.Font.GothamBold
+GoldAxe.Text = "Gold Axe"
+GoldAxe.TextColor3 = Color3.new(0, 0, 0)
+GoldAxe.TextSize = 20
+
+Jump.Name = "Jump"
+Jump.Parent = Frame
+Jump.BackgroundColor3 = Color3.new(1, 1, 1)
+Jump.Position = UDim2.new(0.613365114, 0, 0.833333373, 0)
+Jump.Size = UDim2.new(0, 154, 0, 28)
+Jump.Font = Enum.Font.GothamBold
+Jump.Text = "Jump Hack"
+Jump.TextColor3 = Color3.new(0, 0, 0)
+Jump.TextSize = 20
+
+WallHax.Name = "WallHax"
+WallHax.Parent = Frame
+WallHax.BackgroundColor3 = Color3.new(1, 1, 1)
+WallHax.Position = UDim2.new(0.52505964, 0, 0.490740746, 0)
+WallHax.Size = UDim2.new(0, 176, 0, 28)
+WallHax.Font = Enum.Font.GothamBold
+WallHax.Text = "Wall Color Hack"
+WallHax.TextColor3 = Color3.new(0, 0, 0)
+WallHax.TextSize = 20
+
+Teleportt.Name = "Teleportt"
+Teleportt.Parent = Frame
+Teleportt.BackgroundColor3 = Color3.new(1, 1, 1)
+Teleportt.Position = UDim2.new(0.0501193106, 0, 0.490740746, 0)
+Teleportt.Size = UDim2.new(0, 176, 0, 28)
+Teleportt.Font = Enum.Font.GothamBold
+Teleportt.Text = "Teleport"
+Teleportt.TextColor3 = Color3.new(0, 0, 0)
+Teleportt.TextSize = 20
+
+Wnum.Name = "Wnum"
+Wnum.Parent = Frame
+Wnum.BackgroundColor3 = Color3.new(1, 1, 1)
+Wnum.Position = UDim2.new(0.0548925996, 0, 0.703703701, 0)
+Wnum.Size = UDim2.new(0, 128, 0, 22)
+Wnum.Font = Enum.Font.GothamBold
+Wnum.Text = "15"
+Wnum.TextColor3 = Color3.new(0, 0, 0)
+Wnum.TextSize = 20
+
+Jnum.Name = "Jnum"
+Jnum.Parent = Frame
+Jnum.BackgroundColor3 = Color3.new(1, 1, 1)
+Jnum.Position = UDim2.new(0.644391418, 0, 0.703703701, 0)
+Jnum.Size = UDim2.new(0, 128, 0, 22)
+Jnum.Font = Enum.Font.GothamBold
+Jnum.Text = "50"
+Jnum.TextColor3 = Color3.new(0, 0, 0)
+Jnum.TextSize = 20
+
+Tpframe.Name = "Tpframe"
+Tpframe.Parent = Frame
+Tpframe.Visible = false
+Tpframe.BackgroundColor3 = Color3.new(1, 1, 1)
+Tpframe.BorderColor3 = Color3.new(1, 1, 1)
+Tpframe.BorderSizePixel = 2
+Tpframe.Position = UDim2.new(-0.279236287, 0, 0, 0)
+Tpframe.Size = UDim2.new(0, 108, 0, 216)
+
+Tittle.Name = "Tittle"
+Tittle.Parent = Tpframe
+Tittle.BackgroundColor3 = Color3.new(1, 1, 1)
+Tittle.BorderSizePixel = 2
+Tittle.Position = UDim2.new(7.06425425e-08, 0, 0, 0)
+Tittle.Size = UDim2.new(0, 108, 0, 23)
+Tittle.Font = Enum.Font.GothamBold
+Tittle.Text = "Teleport"
+Tittle.TextColor3 = Color3.new(0, 0, 0)
+Tittle.TextSize = 20
+
+LolF.Name = "LolF"
+LolF.Parent = Tpframe
+LolF.BackgroundColor3 = Color3.new(0, 0, 0)
+LolF.BorderSizePixel = 0
+LolF.Position = UDim2.new(0, 0, 0.106481485, 0)
+LolF.Size = UDim2.new(0, 108, 0, 193)
+
+plot.Name = "plot"
+plot.Parent = LolF
+plot.BackgroundColor3 = Color3.new(1, 1, 1)
+plot.Position = UDim2.new(0.0648148805, 0, 0.0279903859, 0)
+plot.Size = UDim2.new(0, 81, 0, 23)
+plot.Font = Enum.Font.GothamBold
+plot.Text = "You Base"
+plot.TextColor3 = Color3.new(0, 0, 0)
+plot.TextSize = 14
+
+woodrus.Name = "woodrus"
+woodrus.Parent = LolF
+woodrus.BackgroundColor3 = Color3.new(1, 1, 1)
+woodrus.Position = UDim2.new(0.0648148805, 0, 0.0997496471, 0)
+woodrus.Size = UDim2.new(0, 81, 0, 23)
+woodrus.Font = Enum.Font.GothamBold
+woodrus.Text = "WoodRus"
+woodrus.TextColor3 = Color3.new(0, 0, 0)
+woodrus.TextSize = 14
+
+spawn.Name = "spawn"
+spawn.Parent = LolF
+spawn.BackgroundColor3 = Color3.new(1, 1, 1)
+spawn.Position = UDim2.new(0.0648148805, 0, 0.169194102, 0)
+spawn.Size = UDim2.new(0, 81, 0, 23)
+spawn.Font = Enum.Font.GothamBold
+spawn.Text = "Spawn"
+spawn.TextColor3 = Color3.new(0, 0, 0)
+spawn.TextSize = 14
+
+volcano.Name = "volcano"
+volcano.Parent = LolF
+volcano.BackgroundColor3 = Color3.new(1, 1, 1)
+volcano.Position = UDim2.new(0.0648148805, 0, 0.243268177, 0)
+volcano.Size = UDim2.new(0, 81, 0, 23)
+volcano.Font = Enum.Font.GothamBold
+volcano.Text = "Volcano"
+volcano.TextColor3 = Color3.new(0, 0, 0)
+volcano.TextSize = 14
+
+swamp.Name = "swamp"
+swamp.Parent = LolF
+swamp.BackgroundColor3 = Color3.new(1, 1, 1)
+swamp.Position = UDim2.new(0.0648148805, 0, 0.308082998, 0)
+swamp.Size = UDim2.new(0, 81, 0, 23)
+swamp.Font = Enum.Font.GothamBold
+swamp.Text = "Swamp"
+swamp.TextColor3 = Color3.new(0, 0, 0)
+swamp.TextSize = 14
+
+palm.Name = "palm"
+palm.Parent = LolF
+palm.BackgroundColor3 = Color3.new(1, 1, 1)
+palm.Position = UDim2.new(0.0648148805, 0, 0.372897804, 0)
+palm.Size = UDim2.new(0, 81, 0, 23)
+palm.Font = Enum.Font.GothamBold
+palm.Text = "Palm"
+palm.TextColor3 = Color3.new(0, 0, 0)
+palm.TextSize = 14
+
+cave.Name = "cave"
+cave.Parent = LolF
+cave.BackgroundColor3 = Color3.new(1, 1, 1)
+cave.Position = UDim2.new(0.0648148805, 0, 0.444657058, 0)
+cave.Size = UDim2.new(0, 81, 0, 23)
+cave.Font = Enum.Font.GothamBold
+cave.Text = "Cave"
+cave.TextColor3 = Color3.new(0, 0, 0)
+cave.TextSize = 14
+
+cars.Name = "cars"
+cars.Parent = LolF
+cars.BackgroundColor3 = Color3.new(1, 1, 1)
+cars.Position = UDim2.new(0.0648148805, 0, 0.514101505, 0)
+cars.Size = UDim2.new(0, 81, 0, 23)
+cars.Font = Enum.Font.GothamBold
+cars.Text = "Boxed Cars"
+cars.TextColor3 = Color3.new(0, 0, 0)
+cars.TextSize = 14
+
+strangemen.Name = "strangemen"
+strangemen.Parent = LolF
+strangemen.BackgroundColor3 = Color3.new(1, 1, 1)
+strangemen.Position = UDim2.new(0.0648148805, 0, 0.583545923, 0)
+strangemen.Size = UDim2.new(0, 81, 0, 23)
+strangemen.Font = Enum.Font.GothamBold
+strangemen.Text = "Strange Man"
+strangemen.TextColor3 = Color3.new(0, 0, 0)
+strangemen.TextSize = 14
+
+theden.Name = "theden"
+theden.Parent = LolF
+theden.BackgroundColor3 = Color3.new(1, 1, 1)
+theden.Position = UDim2.new(0.0648148805, 0, 0.650675535, 0)
+theden.Size = UDim2.new(0, 81, 0, 23)
+theden.Font = Enum.Font.GothamBold
+theden.Text = "The Den"
+theden.TextColor3 = Color3.new(0, 0, 0)
+theden.TextSize = 14
+function Create(cls,props)
+	local inst = Instance.new(cls)
+	for i,v in pairs(props) do
+		inst[i] = v
+	end
+	return inst
+end
+Color.Name = "Color"
+Color.Visible = false
+Color.Parent = Frame
+Color.BackgroundColor3 = Color3.new(1, 1, 1)
+Color.BorderColor3 = Color3.new(1, 1, 1)
+Color.BorderSizePixel = 2
+Color.Position = UDim2.new(1.02625299, 0, 0, 0)
+Color.Size = UDim2.new(0, 103, 0, 216)
+
+titttle.Name = "titttle"
+titttle.Parent = Color
+titttle.BackgroundColor3 = Color3.new(1, 1, 1)
+titttle.BorderSizePixel = 2
+titttle.Size = UDim2.new(0, 103, 0, 23)
+titttle.Font = Enum.Font.GothamBold
+titttle.Text = "Color Hax"
+titttle.TextColor3 = Color3.new(0, 0, 0)
+titttle.TextSize = 14
+local service = setmetatable({}, {
+	__index = function(t, k)
+		return game:GetService(k)
+	end
+})
+Grey.Name = "Grey"
+Grey.Parent = Color
+Grey.BackgroundColor3 = Color3.new(1, 1, 1)
+Grey.BorderColor3 = Color3.new(0, 0, 0)
+Grey.BorderSizePixel = 2
+Grey.Position = UDim2.new(0.0679611638, 0, 0.152777776, 0)
+Grey.Size = UDim2.new(0, 89, 0, 26)
+Grey.Font = Enum.Font.GothamBold
+Grey.Text = "Grey"
+Grey.TextColor3 = Color3.new(0, 0, 0)
+Grey.TextSize = 20
+
+Phantom.Name = "Phantom"
+Phantom.Parent = Color
+Phantom.BackgroundColor3 = Color3.new(1, 1, 1)
+Phantom.BorderColor3 = Color3.new(0, 0, 0)
+Phantom.BorderSizePixel = 2
+Phantom.Position = UDim2.new(0.0679611638, 0, 0.319444448, 0)
+Phantom.Size = UDim2.new(0, 89, 0, 26)
+Phantom.Font = Enum.Font.GothamBold
+Phantom.Text = "Phantom"
+Phantom.TextColor3 = Color3.new(0, 0, 0)
+Phantom.TextSize = 20
+
+Spooky.Name = "Spooky"
+Spooky.Parent = Color
+Spooky.BackgroundColor3 = Color3.new(1, 1, 1)
+Spooky.BorderColor3 = Color3.new(0, 0, 0)
+Spooky.BorderSizePixel = 2
+Spooky.Position = UDim2.new(0.0679611638, 0, 0.490740746, 0)
+Spooky.Size = UDim2.new(0, 89, 0, 26)
+Spooky.Font = Enum.Font.GothamBold
+Spooky.Text = "Spooky"
+Spooky.TextColor3 = Color3.new(0, 0, 0)
+Spooky.TextSize = 20
+
+Blue.Name = "Blue"
+Blue.Parent = Color
+Blue.BackgroundColor3 = Color3.new(1, 1, 1)
+Blue.BorderColor3 = Color3.new(0, 0, 0)
+Blue.BorderSizePixel = 2
+Blue.Position = UDim2.new(0.0679611638, 0, 0.652777791, 0)
+Blue.Size = UDim2.new(0, 89, 0, 26)
+Blue.Font = Enum.Font.GothamBold
+Blue.Text = "Blue"
+Blue.TextColor3 = Color3.new(0, 0, 0)
+Blue.TextSize = 20
+
+LightSpooky.Name = "LightSpooky"
+LightSpooky.Parent = Color
+LightSpooky.BackgroundColor3 = Color3.new(1, 1, 1)
+LightSpooky.BorderColor3 = Color3.new(0, 0, 0)
+LightSpooky.BorderSizePixel = 2
+LightSpooky.Position = UDim2.new(0.0679611638, 0, 0.828703701, 0)
+LightSpooky.Size = UDim2.new(0, 89, 0, 26)
+LightSpooky.Font = Enum.Font.GothamBold
+LightSpooky.Text = "L Spooky"
+LightSpooky.TextColor3 = Color3.new(0, 0, 0)
+LightSpooky.TextSize = 20
+
+X.Name = "X"
+X.Parent = Frame
+X.BackgroundColor3 = Color3.new(1, 0, 0)
+X.BorderColor3 = Color3.new(1, 0, 0)
+X.Position = UDim2.new(0.930787563, 0, -0.00925925933, 0)
+X.Size = UDim2.new(0, 29, 0, 26)
+X.Font = Enum.Font.GothamBold
+X.Text = "X"
+X.TextColor3 = Color3.new(1, 1, 1)
+X.TextSize = 20
+
+--U Is Gay
+
+Walk.MouseButton1Click:connect(function()
+	while wait() do
+		plr.Humanoid.WalkSpeed = Wnum.Text
+	end
 end)
 
--- Info bar
-local InfoBar = Instance.new("TextLabel")
-InfoBar.Size = UDim2.new(1,0,0,20)
-InfoBar.Position = UDim2.new(0,0,0,40)
-InfoBar.BackgroundColor3 = Color3.fromRGB(15,15,20)
-InfoBar.BorderSizePixel = 0
-InfoBar.Font = Enum.Font.Gotham
-InfoBar.TextSize = 11
-InfoBar.TextColor3 = Color3.fromRGB(160,160,160)
-InfoBar.Text = " Butter hub has a Discord server https://discord.gg/butterhub  |  Credits: Applebox, silentben8x, tip"
-InfoBar.TextXAlignment = Enum.TextXAlignment.Left
-InfoBar.Parent = Main
+Jump.MouseButton1Click:connect(function()
+	while wait() do
+		plr.Humanoid.JumpPower = Jnum.Text
+	end
+end)
 
--- =========================================================
--- TAB SYSTEM
--- =========================================================
+X.MouseButton1Click:connect(function()
+	Lt2:Destroy()
+end)
 
-local TAB_NAMES = {
-    "World", "Wood", "Item", "Troll", "Dupe", "Sorter", "Settings", "Credits"
-}
-
-local TabBar = Instance.new("Frame")
-TabBar.Size = UDim2.new(0,120,1,-62)
-TabBar.Position = UDim2.new(0,0,0,62)
-TabBar.BackgroundColor3 = Color3.fromRGB(20,20,30)
-TabBar.BorderSizePixel = 0
-TabBar.Parent = Main
-
-local TabLayout = Instance.new("UIListLayout")
-TabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-TabLayout.Padding = UDim.new(0,2)
-TabLayout.Parent = TabBar
-
-local ContentArea = Instance.new("ScrollingFrame")
-ContentArea.Size = UDim2.new(1,-125,1,-62)
-ContentArea.Position = UDim2.new(0,122,0,62)
-ContentArea.BackgroundColor3 = Color3.fromRGB(22,22,32)
-ContentArea.BorderSizePixel = 0
-ContentArea.ScrollBarThickness = 4
-ContentArea.CanvasSize = UDim2.new(0,0,0,0)
-ContentArea.AutomaticCanvasSize = Enum.AutomaticSize.Y
-ContentArea.Parent = Main
-Instance.new("UIListLayout",ContentArea).Padding = UDim.new(0,4)
-
-local tabButtons = {}
-local tabContents = {}
-local activeTab = nil
-
-local function switchTab(name)
-    activeTab = name
-    for n,btn in pairs(tabButtons) do
-        if n == name then
-            btn.BackgroundColor3 = Color3.fromRGB(255,215,0)
-            btn.TextColor3 = Color3.fromRGB(20,20,20)
-        else
-            btn.BackgroundColor3 = Color3.fromRGB(30,30,45)
-            btn.TextColor3 = Color3.fromRGB(200,200,200)
-        end
-    end
-    for n,frame in pairs(tabContents) do
-        frame.Visible = (n == name)
-    end
-end
-
-for i,tabName in pairs(TAB_NAMES) do
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1,0,0,36)
-    btn.BackgroundColor3 = Color3.fromRGB(30,30,45)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 13
-    btn.TextColor3 = Color3.fromRGB(200,200,200)
-    btn.Text = tabName
-    btn.BorderSizePixel = 0
-    btn.LayoutOrder = i
-    btn.Parent = TabBar
-    Instance.new("UICorner",btn).CornerRadius = UDim.new(0,4)
-    tabButtons[tabName] = btn
-
-    local content = Instance.new("Frame")
-    content.Size = UDim2.new(1,0,1,0)
-    content.Position = UDim2.new(0,0,0,0)
-    content.BackgroundTransparency = 1
-    content.Visible = false
-    content.Name = tabName.."Tab"
-    content.Parent = ContentArea
-    tabContents[tabName] = content
-
-    local layout = Instance.new("UIListLayout")
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0,4)
-    layout.Parent = content
-
-    btn.MouseButton1Click:Connect(function()
-        switchTab(tabName)
-    end)
-end
-
--- =========================================================
--- UI HELPERS
--- =========================================================
-
-local function makeButton(parent, text, callback, order)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1,-8,0,30)
-    btn.BackgroundColor3 = Color3.fromRGB(35,35,50)
-    btn.Font = Enum.Font.Gotham
-    btn.TextSize = 13
-    btn.TextColor3 = Color3.fromRGB(220,220,220)
-    btn.Text = text
-    btn.BorderSizePixel = 0
-    btn.LayoutOrder = order or 0
-    btn.AutoButtonColor = true
-    btn.Parent = parent
-    Instance.new("UICorner",btn).CornerRadius = UDim.new(0,4)
-    btn.MouseButton1Click:Connect(callback)
-    return btn
-end
-
-local function makeToggle(parent, text, flagKey, callback, order)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1,-8,0,30)
-    btn.BackgroundColor3 = Color3.fromRGB(35,35,50)
-    btn.Font = Enum.Font.Gotham
-    btn.TextSize = 13
-    btn.TextColor3 = Color3.fromRGB(220,220,220)
-    btn.Text = "[ ] " .. text
-    btn.BorderSizePixel = 0
-    btn.LayoutOrder = order or 0
-    btn.Parent = parent
-    Instance.new("UICorner",btn).CornerRadius = UDim.new(0,4)
-    btn.MouseButton1Click:Connect(function()
-        Flags[flagKey] = not Flags[flagKey]
-        btn.Text = (Flags[flagKey] and "[x] " or "[ ] ") .. text
-        btn.BackgroundColor3 = Flags[flagKey]
-            and Color3.fromRGB(40,80,40)
-            or  Color3.fromRGB(35,35,50)
-        if callback then callback(Flags[flagKey]) end
-    end)
-    return btn
-end
-
-local function makeSlider(parent, text, min, max, default, onChange, order)
-    local holder = Instance.new("Frame")
-    holder.Size = UDim2.new(1,-8,0,50)
-    holder.BackgroundTransparency = 1
-    holder.LayoutOrder = order or 0
-    holder.Parent = parent
-
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1,0,0,20)
-    lbl.BackgroundTransparency = 1
-    lbl.Font = Enum.Font.Gotham
-    lbl.TextSize = 12
-    lbl.TextColor3 = Color3.fromRGB(180,180,180)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Text = text .. ": " .. default
-    lbl.Parent = holder
-
-    local bar = Instance.new("Frame")
-    bar.Name = "Bar"
-    bar.Size = UDim2.new(1,0,0,10)
-    bar.Position = UDim2.new(0,0,0,24)
-    bar.BackgroundColor3 = Color3.fromRGB(50,50,70)
-    bar.BorderSizePixel = 0
-    bar.Parent = holder
-    Instance.new("UICorner",bar).CornerRadius = UDim.new(1,0)
-
-    local fill = Instance.new("Frame")
-    fill.Size = UDim2.new((default-min)/(max-min),0,1,0)
-    fill.BackgroundColor3 = Color3.fromRGB(255,215,0)
-    fill.BorderSizePixel = 0
-    fill.Parent = bar
-    Instance.new("UICorner",fill).CornerRadius = UDim.new(1,0)
-
-    local slider = Instance.new("TextButton")
-    slider.Name = "Slider"
-    slider.Size = UDim2.new(0,14,0,14)
-    slider.Position = UDim2.new((default-min)/(max-min),0,0.5,-7)
-    slider.BackgroundColor3 = Color3.fromRGB(255,255,255)
-    slider.Text = ""
-    slider.BorderSizePixel = 0
-    slider.Parent = bar
-    Instance.new("UICorner",slider).CornerRadius = UDim.new(1,0)
-
-    local dragging = false
-    slider.MouseButton1Down:Connect(function() dragging = true end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then
-            dragging = false
-        end
-    end)
-    UserInputService.InputChanged:Connect(function(i)
-        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
-            local rel = (i.Position.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
-            rel = math.clamp(rel, 0, 1)
-            local value = math.floor(min + (max-min)*rel)
-            fill.Size = UDim2.new(rel,0,1,0)
-            slider.Position = UDim2.new(rel,0,0.5,-7)
-            lbl.Text = text .. ": " .. value
-            if onChange then onChange(value) end
-        end
-    end)
-    return holder
-end
-
-local function makeDropdown(parent, text, options, onChange, order)
-    local holder = Instance.new("Frame")
-    holder.Size = UDim2.new(1,-8,0,30)
-    holder.BackgroundTransparency = 1
-    holder.LayoutOrder = order or 0
-    holder.Parent = parent
-
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(1,0,1,0)
-    btn.BackgroundColor3 = Color3.fromRGB(35,35,50)
-    btn.Font = Enum.Font.Gotham
-    btn.TextSize = 13
-    btn.TextColor3 = Color3.fromRGB(220,220,220)
-    btn.Text = text .. ": " .. (options[1] or "None")
-    btn.BorderSizePixel = 0
-    btn.Parent = holder
-    Instance.new("UICorner",btn).CornerRadius = UDim.new(0,4)
-
-    local selected = options[1]
-    local idx = 1
-    btn.MouseButton1Click:Connect(function()
-        idx = idx % #options + 1
-        selected = options[idx]
-        btn.Text = text .. ": " .. selected
-        if onChange then onChange(selected) end
-    end)
-    return holder, function() return selected end
-end
-
-local function makeSeparator(parent, text, order)
-    local lbl = Instance.new("TextLabel")
-    lbl.Size = UDim2.new(1,-8,0,20)
-    lbl.BackgroundColor3 = Color3.fromRGB(255,215,0)
-    lbl.BackgroundTransparency = 0.8
-    lbl.Font = Enum.Font.GothamBold
-    lbl.TextSize = 11
-    lbl.TextColor3 = Color3.fromRGB(255,215,0)
-    lbl.TextXAlignment = Enum.TextXAlignment.Left
-    lbl.Text = "  " .. (text or "")
-    lbl.BorderSizePixel = 0
-    lbl.LayoutOrder = order or 0
-    lbl.Parent = parent
-    return lbl
-end
-
--- =========================================================
--- WORLD TAB
--- =========================================================
-do
-    local t = tabContents["World"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"TELEPORTS",ord())
-    for name,cf in pairs(LOCATIONS) do
-        makeButton(t,"→ " .. name, function()
-            teleportTo(cf)
-        end, ord())
-    end
-
-    makeSeparator(t,"PLAYER TELEPORTS",ord())
-    local plrNames = {}
-    for _,p in pairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer then table.insert(plrNames,p.Name) end
-    end
-    local ddTPTP, getTPTP = makeDropdown(t,"Teleport to Player",#plrNames>0 and plrNames or {"None"},nil,ord())
-    makeButton(t,"Teleport to Player", function()
-        local plr = Players:FindFirstChild(getTPTP())
-        teleportToPlayer(plr)
-    end, ord())
-    makeButton(t,"Teleport to Player Base", function()
-        local plr = Players:FindFirstChild(getTPTP())
-        teleportToBase(plr)
-    end, ord())
-    makeButton(t,"Teleport Vehicle to Player", function()
-        local plr = Players:FindFirstChild(getTPTP())
-        teleportVehicleToPlayer(plr)
-    end, ord())
-    makeButton(t,"Truck Teleport Selected (Fast)", function()
-        local plr = Players:FindFirstChild(getTPTP())
-        if plr and plr.Character then
-            local veh = Workspace:FindFirstChild("Vehicles")
-            if veh then
-                local myVeh = veh:FindFirstChild(LocalPlayer.Name)
-                if myVeh then
-                    myVeh:SetPrimaryPartCFrame(plr.Character.HumanoidRootPart.CFrame + Vector3.new(10,0,0))
+Tpwood.MouseButton1Click:connect(function()
+    for _, Log in pairs(service.Workspace.LogModels:GetChildren()) do
+        if Log.Name:sub(1, 6) == "Loose_" and Log:findFirstChild("Owner") then
+            if Log.Owner.Value == service.Players.LocalPlayer then
+                Log:MoveTo(service.Players.LocalPlayer.Character.HumanoidRootPart.Position + Vector3.new(0, 20, 0))
+                for i=1,100 do
+                    service.ReplicatedStorage.Interaction.ClientIsDragging:FireServer(Log)
                 end
             end
         end
-    end, ord())
-
-    makeSeparator(t,"SERVER",ord())
-    makeButton(t,"Server Hop",serverHop,ord())
-    makeButton(t,"Toggle Shop Doors",toggleShopDoors,ord())
-    makeToggle(t,"No Fog","NoFog",setNoFog,ord())
-    makeToggle(t,"Night","Night",setNight,ord())
-    makeToggle(t,"Better Graphics","BetterGraphics",betterGraphics,ord())
-    makeSlider(t,"FOV",30,120,70,setFOV,ord())
-end
-
--- =========================================================
--- WOOD TAB
--- =========================================================
-do
-    local t = tabContents["Wood"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"AUTO BUILD",ord())
-    makeToggle(t,"Auto Build","AutoBuild",nil,ord())
-    makeToggle(t,"Auto Build 2 (Plot)","AutoBuild2",nil,ord())
-    makeToggle(t,"Auto Build 4","AutoBuild4",nil,ord())
-    local ddABP,getABP = makeDropdown(t,"Build Plot",{"My Plot","Player Plot"},nil,ord())
-    makeButton(t,"Build Onto Players Plot", function()
-        local plr = Players:GetPlayers()[1]
-        buildOntoPlayersPlot(plr)
-    end, ord())
-
-    makeSeparator(t,"SAWMILL",ord())
-    local ddSawmill,getSawmill = makeDropdown(t,"Sawmill Tree",WOOD_TYPES,nil,ord())
-    makeButton(t,"Select Sawmill", function()
-        selectSawmill(getSawmill())
-    end, ord())
-    makeButton(t,"Sawmill Log", function()
-        sawmillTree(getSawmill())
-    end, ord())
-    makeButton(t,"Mod Sawmill Speed", function()
-        modSawmill(100)
-    end, ord())
-
-    makeSeparator(t,"TREES",ord())
-    makeButton(t,"View End Tree",viewEndTree,ord())
-    makeToggle(t,"Log Models","LogModels",logModels,ord())
-
-    makeSeparator(t,"SELL",ord())
-    makeButton(t,"Sell All Logs",sellAllLogs,ord())
-    makeButton(t,"Sell Sold Sign", function()
-        local re = ReplicatedStorage:FindFirstChild("SellSign")
-        if re then re:FireServer() end
-    end, ord())
-
-    makeSeparator(t,"LAND",ord())
-    makeButton(t,"Free Land",freeLand,ord())
-    makeButton(t,"Select Land",selectLand,ord())
-    makeButton(t,"Copy Base", function() copyBase(LocalPlayer) end, ord())
-    makeButton(t,"Load Base", function()
-        local re = ReplicatedStorage:FindFirstChild("LoadSaveGUI")
-        if re then re:FireServer() end
-    end, ord())
-end
-
--- =========================================================
--- ITEM TAB
--- =========================================================
-do
-    local t = tabContents["Item"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"SHOP",ord())
-    makeButton(t,"Grab Shop Items",grabShopItems,ord())
-    makeButton(t,"Purchase All Blueprints",purchaseAllBlueprints,ord())
-    makeButton(t,"Get Tools Fix",getToolsfix,ord())
-    makeButton(t,"Get Best Axe", function()
-        local axe = getBestAxe()
-        if axe then notify("Best axe: " .. axe.Name) end
-    end, ord())
-    makeButton(t,"Get Tool Stats",getToolStats,ord())
-    makeButton(t,"Drop Tools",dropTools,ord())
-    makeButton(t,"Drop Owner",dropOwner,ord())
-    makeButton(t,"Lasso tool", function()
-        local lasso = LocalPlayer.Backpack:FindFirstChild("Lasso")
-        if lasso then
-            LocalPlayer.Character:FindFirstChildOfClass("Humanoid"):EquipTool(lasso)
-        end
-    end, ord())
-
-    makeSeparator(t,"AUTO BUY",ord())
-    makeToggle(t,"Auto Buy","AutoBuyg",function(v)
-        if v then autoBuy("item") else autoBuyRunning = false end
-    end, ord())
-
-    makeSeparator(t,"ITEM OWNER",ord())
-    makeButton(t,"Item Owner", function()
-        for _,v in pairs(Workspace:GetDescendants()) do
-            if v:GetAttribute("Owner") then
-                print(v.Name, "owned by", v:GetAttribute("Owner"))
-            end
-        end
-    end, ord())
-
-    makeSeparator(t,"BLUEPRINT",ord())
-    makeButton(t,"Steal Blueprints",stealBps,ord())
-    makeButton(t,"Deselect Items",deselect,ord())
-    makeButton(t,"Abort",abort,ord())
-end
-
--- =========================================================
--- TROLL TAB
--- =========================================================
-do
-    local t = tabContents["Troll"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"PLAYER",ord())
-    local ddKill,getKill = makeDropdown(t,"Target Player",{"All"},nil,ord())
-    makeButton(t,"Kill Player", function()
-        local name = getKill()
-        if name == "All" then
-            for _,p in pairs(Players:GetPlayers()) do
-                if p ~= LocalPlayer then killPlayer(p) end
-            end
-        else
-            killPlayer(Players:FindFirstChild(name))
-        end
-    end, ord())
-    makeButton(t,"Sit In Any Vehicle",sitInAnyVehicle,ord())
-    makeButton(t,"Pay", function()
-        local re = ReplicatedStorage:FindFirstChild("Pay")
-        if re then re:FireServer(Players:GetPlayers()[1], 1) end
-    end, ord())
-    makeButton(t,"Steal Blueprints",stealBps,ord())
-
-    makeSeparator(t,"ORBIT",ord())
-    local ddOrbit,getOrbit = makeDropdown(t,"Orbit Target",{"None"},nil,ord())
-    makeButton(t,"Start Orbit", function()
-        local plr = Players:FindFirstChild(getOrbit())
-        if plr then startOrbit(plr) end
-    end, ord())
-    makeToggle(t,"Orbit Active","orbitFunc",nil,ord())
-    makeSlider(t,"Orbit Speed",1,20,1,function(v) Settings.OrbitSpeed=v end,ord())
-    makeSlider(t,"Orbit Distance",5,100,50,function(v) Settings.distanceSlider=v end,ord())
-
-    makeSeparator(t,"MISC",ord())
-    makeButton(t,"Spawn Part",spawnPart,ord())
-    makeButton(t,"Send Notification", function() sendUserNotice("Butter Hub") end, ord())
-    makeButton(t,"Server Hop",serverHop,ord())
-end
-
--- =========================================================
--- DUPE TAB
--- =========================================================
-do
-    local t = tabContents["Dupe"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"DUPE",ord())
-    makeButton(t,"Dupe Inventory",dupeInventory,ord())
-
-    makeSeparator(t,"SLOTS",ord())
-    for i=1,SLOT_COUNT do
-        local slotFrame = Instance.new("Frame")
-        slotFrame.Size = UDim2.new(1,-8,0,60)
-        slotFrame.BackgroundColor3 = Color3.fromRGB(30,30,45)
-        slotFrame.BorderSizePixel = 0
-        slotFrame.LayoutOrder = ord()
-        slotFrame.Parent = t
-        Instance.new("UICorner",slotFrame).CornerRadius = UDim.new(0,4)
-        Instance.new("UIPadding",slotFrame).PaddingLeft = UDim.new(0,6)
-
-        local slotLabel = Instance.new("TextLabel")
-        slotLabel.Size = UDim2.new(1,0,0,20)
-        slotLabel.BackgroundTransparency = 1
-        slotLabel.Font = Enum.Font.GothamBold
-        slotLabel.TextSize = 12
-        slotLabel.TextColor3 = Color3.fromRGB(255,215,0)
-        slotLabel.TextXAlignment = Enum.TextXAlignment.Left
-        slotLabel.Text = "Slot " .. i .. " — " .. SaveSlotNames[i]
-        slotLabel.Parent = slotFrame
-
-        local loadBtn = Instance.new("TextButton")
-        loadBtn.Size = UDim2.new(0.48,0,0,26)
-        loadBtn.Position = UDim2.new(0,0,0,26)
-        loadBtn.BackgroundColor3 = Color3.fromRGB(40,80,40)
-        loadBtn.Font = Enum.Font.Gotham
-        loadBtn.TextSize = 12
-        loadBtn.TextColor3 = Color3.fromRGB(255,255,255)
-        loadBtn.Text = "Load Slot"
-        loadBtn.BorderSizePixel = 0
-        loadBtn.Parent = slotFrame
-        Instance.new("UICorner",loadBtn).CornerRadius = UDim.new(0,4)
-        loadBtn.MouseButton1Click:Connect(function()
-            notify("Loading: " .. SaveSlotNames[i])
-        end)
-
-        local saveBtn = Instance.new("TextButton")
-        saveBtn.Size = UDim2.new(0.48,0,0,26)
-        saveBtn.Position = UDim2.new(0.52,0,0,26)
-        saveBtn.BackgroundColor3 = Color3.fromRGB(50,50,90)
-        saveBtn.Font = Enum.Font.Gotham
-        saveBtn.TextSize = 12
-        saveBtn.TextColor3 = Color3.fromRGB(255,255,255)
-        saveBtn.Text = "Save Slot"
-        saveBtn.BorderSizePixel = 0
-        saveBtn.Parent = slotFrame
-        Instance.new("UICorner",saveBtn).CornerRadius = UDim.new(0,4)
-        saveBtn.MouseButton1Click:Connect(function()
-            saveSettings()
-            notify("Saved to slot " .. i)
-        end)
-    end
-end
-
--- =========================================================
--- SORTER TAB
--- =========================================================
-do
-    local t = tabContents["Sorter"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"SORTER",ord())
-    makeButton(t,"Sort Player Logs",sorterTab1,ord())
-    makeButton(t,"Count Items", function()
-        local n = countitems(LocalPlayer.Backpack)
-        notify("Items in backpack: " .. n)
-    end, ord())
-    local ddSort,getSort = makeDropdown(t,"Sort Player",{"TimesSort","Amount"},nil,ord())
-    makeButton(t,"Sort by "..getSort(),function()
-        sorterTab1()
-    end,ord())
-    makeButton(t,"Select All Logs", function()
-        local re = ReplicatedStorage:FindFirstChild("SelectionTp")
-        if re then
-            for _,log in pairs(Workspace:GetDescendants()) do
-                if log:GetAttribute("WoodType") then
-                    re:FireServer(log)
-                end
-            end
-        end
-    end, ord())
-    makeButton(t,"Select Sawmill Tree", function()
-        local re = ReplicatedStorage:FindFirstChild("SelectionTpWOOD")
-        if re then re:FireServer() end
-    end, ord())
-end
-
--- =========================================================
--- SETTINGS TAB
--- =========================================================
-do
-    local t = tabContents["Settings"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    makeSeparator(t,"MOVEMENT",ord())
-    makeSlider(t,"Walkspeed",16,500,16,setWalkspeed,ord())
-    makeSlider(t,"Jump Power",50,500,50,setJumpPower,ord())
-    makeSlider(t,"Fly Speed",10,500,50,function(v) Settings.FlySpeed=v end,ord())
-
-    makeSeparator(t,"TOGGLES",ord())
-    makeToggle(t,"NoClip","NoClip",nil,ord())
-    makeToggle(t,"Infinite Jump","InfiniteJump",nil,ord())
-    makeToggle(t,"God Mode","GodMode",setGodMode,ord())
-    makeToggle(t,"BetterFly","BetterFly",nil,ord())
-    makeToggle(t,"Infinite HRP","InfiniteHrp",infHrp,ord())
-    makeToggle(t,"Click to TP","ClickToTP",nil,ord())
-
-    makeSeparator(t,"VISUAL",ord())
-    makeSlider(t,"FOV",30,120,70,setFOV,ord())
-    makeToggle(t,"No Fog","NoFog",setNoFog,ord())
-    makeToggle(t,"Night Mode","Night",setNight,ord())
-    makeToggle(t,"Better Graphics","BetterGraphics",betterGraphics,ord())
-
-    makeSeparator(t,"KEYBINDS",ord())
-    local ddFlyKey,getFlyKey = makeDropdown(t,"Fly Key",{"E","Q","F","G","H"},nil,ord())
-
-    makeSeparator(t,"SAVE / LOAD",ord())
-    makeButton(t,"Save Settings",saveSettings,ord())
-    makeButton(t,"Load Settings",loadSettings,ord())
-    for i=1,SLOT_COUNT do
-        makeButton(t,"Load Slot " .. i, function()
-            notify("Loaded slot " .. i .. ": " .. SaveSlotNames[i])
-        end, ord())
-    end
-
-    makeSeparator(t,"INFO",ord())
-    local infoLabel = Instance.new("TextLabel")
-    infoLabel.Size = UDim2.new(1,-8,0,60)
-    infoLabel.BackgroundTransparency = 1
-    infoLabel.Font = Enum.Font.Gotham
-    infoLabel.TextSize = 11
-    infoLabel.TextColor3 = Color3.fromRGB(160,160,160)
-    infoLabel.TextWrapped = true
-    infoLabel.TextXAlignment = Enum.TextXAlignment.Left
-    infoLabel.LayoutOrder = ord()
-    infoLabel.Text = string.format(
-        "Executor: %s\nPing: %dms\nPlayers: %d\nloaded in: %.1fs",
-        executor, getPing(), getCounter(), tick() % 100
-    )
-    infoLabel.Parent = t
-end
-
--- =========================================================
--- CREDITS TAB
--- =========================================================
-do
-    local t = tabContents["Credits"]
-    local o = 0
-    local function ord() o=o+1 return o end
-
-    local credits = Instance.new("TextLabel")
-    credits.Size = UDim2.new(1,-8,0,200)
-    credits.BackgroundTransparency = 1
-    credits.Font = Enum.Font.Gotham
-    credits.TextSize = 13
-    credits.TextColor3 = Color3.fromRGB(200,200,200)
-    credits.TextWrapped = true
-    credits.RichText = true
-    credits.TextYAlignment = Enum.TextYAlignment.Top
-    credits.LayoutOrder = ord()
-    credits.Text = [[
-<b><font color="rgb(255,215,0)">Butter Hub</font></b>
-Lumber Tycoon came out 15 years ago
-
-<b>Credits:</b>
-Applebox, silentben8x, tip
-
-<b>Discord:</b>
-discord.gg/butterhub
-
-<b>Executor:</b> ]] .. executor .. [[
-
-<b>"Butter is good"</b>
-<b>"Butter is on"</b>
-]]
-    credits.Parent = t
-
-    makeButton(t,"Copy Discord Link", function()
-        if toclipboard then
-            toclipboard("discord.gg/butterhub")
-            notify("Copied to clipboard!")
-        end
-    end, ord())
-
-    makeButton(t,"Beta Features", function()
-        notify("Beta features are enabled for this session.")
-    end, ord())
-end
-
--- =========================================================
--- CLICK TO TP
--- =========================================================
-
-UserInputService.InputBegan:Connect(function(input, gp)
-    if gp then return end
-    if Flags.ClickToTP and input.UserInputType == Enum.UserInputType.MouseButton1 then
-        local ray = Camera:ScreenPointToRay(
-            UserInputService:GetMouseLocation().X,
-            UserInputService:GetMouseLocation().Y
-        )
-        local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000)
-        if result then
-            RootPart.CFrame = CFrame.new(result.Position + Vector3.new(0,3,0))
-        end
     end
 end)
 
--- =========================================================
--- CHARACTER RESPAWN HANDLER
--- =========================================================
-
-LocalPlayer.CharacterAdded:Connect(function(char)
-    Character = char
-    Humanoid = char:WaitForChild("Humanoid")
-    RootPart = char:WaitForChild("HumanoidRootPart")
-
-    -- Re-apply persistent settings
-    Humanoid.WalkSpeed = Settings.Walkspeed
-    Humanoid.JumpPower = Settings.JumpPower
-
-    if Flags.GodMode then
-        Humanoid.MaxHealth = math.huge
-        Humanoid.Health    = math.huge
-    end
+buka = false
+WallHax.MouseButton1Click:connect(function()
+	if buka == true then
+		buka = false
+		Color.Visible = false
+	else
+		buka = true
+		Color.Visible = true
+	end
 end)
 
--- =========================================================
--- STARTUP
--- =========================================================
+buka1 = false
+Teleportt.MouseButton1Click:connect(function()
+	if buka1 == true then
+		buka1 = false
+		Tpframe.Visible = false
+	else
+		buka1 = true
+		Tpframe.Visible = true
+	end
+end)
 
-switchTab("World")
-notify("Butter Hub loaded! Butter is on 🧈")
-print("Butter Hub | Lumber Tycoon 2 | loaded in | " .. executor)
-print("Butter hub has a Discord server https://discord.gg/butterhub")
-print("Credits: Applebox, silentben8x, tip")
+Duping = false
+Dupe.MouseButton1Click:connect(function()
+	local slott = game:GetService('Players').LocalPlayer.CurrentSaveSlot
+	if Duping == true then
+		slott.RobloxLocked = false
+		Duping = false
+		Dupe.BackgroundColor3 = Color3.new(255, 255, 255)
+	else
+		Duping = true
+		if slott.Value == -1 then
+			slott.RobloxLocked = true
+			Dupe.BackgroundColor3 = Color3.new(0, 255, 0)
+		end
+	end
+end)
+
+plot.MouseButton1Click:connect(function()
+	local bch = game:GetService('Players').LocalPlayer
+		for i,v in pairs(game.Workspace.Properties:GetChildren()) do
+		if v.Owner.Value == bch then
+			plr.HumanoidRootPart.CFrame = v.OriginSquare.CFrame + Vector3.new(0,10,0)
+		end
+	end
+end)
+
+woodrus.MouseButton1Click:connect(function()
+	plr.HumanoidRootPart.CFrame = CFrame.new(265, 5, 57)
+end)
+
+spawn.MouseButton1Click:connect(function()
+	plr.HumanoidRootPart.CFrame = CFrame.new(155, 5, 74)
+end)
+
+local tp = plr.HumanoidRootPart
+
+volcano.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(-1585, 625, 1140)
+end)
+
+palm.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(2549, 5, -42)
+end)
+
+cars.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(509, 5.2, -1463)
+end)
+
+cave.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(3581, -177, 430)
+end)
+
+swamp.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(-1209, 138, -801)
+end)
+
+strangemen.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(1061, 20, 1131)
+end)
+
+theden.MouseButton1Click:connect(function()
+	tp.CFrame = CFrame.new(323, 49, 1930)
+end)
+
+-- ColorHax Script
+
+woodtype = "Birch"
+
+local tool = Instance.new("Tool", game.Players.LocalPlayer.Backpack)
+tool.RequiresHandle = false
+--tool.RobloxLocked = true
+tool.Name = "Paint"
+tool.ToolTip = "Changes A Stucture's Wood Type"
+tool.Equipped:connect(function(Mouse)
+Mouse.Button1Down:connect(function()
+if Mouse.Target.Parent:FindFirstChild("Type") or Mouse.Target.Parent:FindFirstChild("BlueprintWoodClass") then
+local Cframe
+if Mouse.Target.Parent:FindFirstChild("MainCFrame") then
+Cframe = Mouse.Target.Parent.MainCFrame.Value
+else
+Cframe = Mouse.Target.Parent.PrimaryPart.CFrame
+end
+if Mouse.Target.Parent ~= nil then
+game.ReplicatedStorage.PlaceStructure.ClientPlacedStructure:FireServer(Mouse.Target.Parent.ItemName.Value, Cframe, game.Players.LocalPlayer, woodtype, Mouse.Target.Parent, false)
+end
+else
+--do nothing
+end
+end)
+end)
+
+g1 = false
+g2 = false
+g3 = false
+g4 = false
+g5 = false
+
+Grey.MouseButton1Click:connect(function()
+	if g1 == true then
+		g1 = false
+		Grey.BackgroundColor3 = Color3.new(255, 255, 255)
+	else
+		g1 = true
+		Grey.BackgroundColor3 = Color3.new(0, 255, 0)
+		if g1 then
+		woodtype = nil
+		end
+	end
+end)
+
+Spooky.MouseButton1Click:connect(function()
+	if g2 == true then
+		g2 = false
+		Spooky.BackgroundColor3 = Color3.new(255, 255, 255)
+	else
+		g2 = true
+		Spooky.BackgroundColor3 = Color3.new(0, 255, 0)
+		if g2 then
+	    woodtype = "Spooky"
+	   end
+	end
+end)
+
+LightSpooky.MouseButton1Click:connect(function()
+	if g3 == true then
+		g3 = false
+		LightSpooky.BackgroundColor3 = Color3.new(255, 255, 255)
+	else
+		g3 = true
+		LightSpooky.BackgroundColor3 = Color3.new(0, 255, 0)
+	if g3 then
+		woodtype = "SpookyNeon"
+	end
+	end
+end)
+
+Blue.MouseButton1Click:connect(function()
+	if g4 == true then
+		g4 = false
+		Blue.BackgroundColor3 = Color3.new(255, 255, 255)
+	else
+		g4 = true
+		Blue.BackgroundColor3 = Color3.new(0, 255, 0)
+		if g4 then
+	    woodtype = "CaveCrawler"
+	end
+	end
+end)
+
+Phantom.MouseButton1Click:connect(function()
+	if g5 == true then
+		g5 = false
+		Phantom.BackgroundColor3 = Color3.new(255, 255, 255)
+	else
+		g5 = true
+		Phantom.BackgroundColor3 = Color3.new(0, 255, 0)
+		if g5 then
+	    woodtype = "LoneCave"
+	end
+	end
+end)
+
+-- GOLD AXE
+GoldAxe.MouseButton1Down:Connect(function()
+	GoldAxe.BackgroundColor3 = Color3.new(0, 255, 0)
+	GoldAxe.Text = "Active, Cant To off"
+Detect = coroutine.wrap(function()
+	Player = game.Players.LocalPlayer
+	mouse = Player:GetMouse()
+	mouse.Button1Down:connect(function()
+		MouseDown = true
+	end)
+	mouse.Button1Up:connect(function()
+		MouseDown = false
+	end)
+end)
+Detect()
+Player = game.Players.LocalPlayer
+mouse = Player:GetMouse()
+game:GetService('RunService').RenderStepped:connect(function()
+	if Player.Character:FindFirstChild("Tool") then
+		if MouseDown == true then
+			if mouse.Target.Name == "WoodSection" then
+				targetWood = mouse.Target
+				Tool=Player.Character.Tool
+				---FaceVector
+				Height = targetWood.CFrame:pointToObjectSpace(mouse.Hit.p).Y + targetWood.Size.Y/2
+				local ray = Ray.new(Player.Character.Head.Position, ((targetWood.CFrame * CFrame.new(0, Height - targetWood.Size.Y/2, 0)).p - Player.Character.Head.Position).unit * 200)
+				part,_,p = workspace:FindPartOnRay(ray, Player.Character)
+				function fixVector(V)
+					return Vector3.new(math.floor(V.X + 0.5), math.floor(V.Y + 0.5), math.floor(V.Z + 0.5))
+				end
+				local faceVector = fixVector(targetWood.CFrame:vectorToObjectSpace(p))
+				if faceVector.Y ~= 0 then
+					return
+				end
+				local lookAtCFrame = CFrame.new(Player.Character.Head.Position, mouse.Hit.p)
+				local relativeCFrame = lookAtCFrame:toObjectSpace(targetWood.CFrame * CFrame.Angles(math.pi/2, 0, 0))
+				local relativeLookVector = relativeCFrame.lookVector
+				local m = relativeLookVector.Y >= 0 and 1 or -1
+				if faceVector.X == 1 then
+					faceVector = Vector3.new(0, 0, -1) * m
+				elseif faceVector.X == -1 then
+					faceVector = Vector3.new(0, 0, 1) * m
+				elseif faceVector.Z == 1 then
+					faceVector = Vector3.new(1, 0, 0) * m
+				elseif faceVector.Z == -1 then
+					faceVector = Vector3.new(-1, 0, 0) * m
+				end
+				local cutEvent = targetWood.Parent.CutEvent
+				game.ReplicatedStorage.Interaction.RemoteProxy:FireServer(cutEvent, {sectionId = targetWood.ID.Value, faceVector = faceVector, height = Height, hitPoints = 0.2, cooldown = 0, cuttingClass = "Axe", tool = Player.Character.Tool})
+			end
+		end
+	end
+end)
+end)
