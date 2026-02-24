@@ -77,8 +77,8 @@ end
 
 -- ───────────────────────────────────────────────────────
 -- ─── REMOTES & ENV needed for dupe ────────────────────
-local SelectLoadPlot       = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
-local PurchasingClient     = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
+local SelectLoadPlot   = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
+local PurchasingClient = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
 
 -- ───────────────────────────────────────────────────────
 --  DUPE AXE — CORRECT FLOW
@@ -100,7 +100,15 @@ local dupeRunning = false
 local function dupeAxe()
     if dupeRunning then return notify('Dupe already running!') end
 
-    local slot = Player.CurrentSaveSlot.Value
+    -- FIX 1: Robust slot check with fallback paths
+    local slot = nil
+    pcall(function() slot = Player.CurrentSaveSlot.Value end)
+    if not slot or slot <= 0 then
+        pcall(function()
+            local s = Player.PlayerGui:FindFirstChild('CurrentSaveSlot')
+            if s then slot = s.Value end
+        end)
+    end
     if not slot or slot <= 0 then
         return notify('Load a save slot first! (in-game menu)')
     end
@@ -120,25 +128,22 @@ local function dupeAxe()
     end
     if not axe then return notify('No axe in inventory! Buy one first.') end
 
-    -- Save the player's current property plot CFrame so we can
-    -- auto-confirm land placement at the SAME spot after respawn
-    local savedPlotCF = nil
+    -- FIX 2: Save the whole plot MODEL (not just its CFrame) — the server
+    --         expects the actual Instance reference to identify which land to load
+    local savedPlot = nil
     for _, prop in ipairs(workspace.Properties:GetChildren()) do
-        if prop:FindFirstChild('Owner') and prop.Owner.Value == Player
-        and prop:FindFirstChild('OriginSquare') then
-            savedPlotCF = prop.OriginSquare.CFrame
+        if prop:FindFirstChild('Owner') and prop.Owner.Value == Player then
+            savedPlot = prop
             break
         end
     end
 
     dupeRunning = true
 
-    -- Hook SelectLoadPlot so when the game asks "where to place land"
-    -- after respawn, we auto-answer with the same plot CFrame
+    -- FIX 3: Hook returns the plot model directly, no extra return values
     local prevInvoke = SelectLoadPlot.OnClientInvoke
     SelectLoadPlot.OnClientInvoke = function()
-        -- Return saved plot position so land loads at same place
-        return savedPlotCF or CFrame.new(0, 0, 0), 0
+        return savedPlot
     end
 
     notify('Equipping axe...')
@@ -161,28 +166,26 @@ local function dupeAxe()
     notify('Dying... axe will drop on your land.')
 
     -- Kill character — LT2 drops the equipped axe automatically
-    local head = c:FindFirstChild('Head')
-    if head then
-        head:Destroy()
+    local headPart = c:FindFirstChild('Head')
+    if headPart then
+        headPart:Destroy()
     end
 
     -- Wait for respawn
     task.wait(2.5)
 
-    -- Also spam selectionMade as backup confirmation
-    -- (covers cases where SelectLoadPlot hook fires differently)
+    -- FIX 4: dot syntax (.) not colon (:) — PurchasingClient is a plain
+    --         env table from getsenv(), not an object. Colon would pass
+    --         the table as `self` and silently error inside every pcall.
     notify('Confirming land placement...')
     local timeout = 0
     repeat
         task.wait(0.15)
         timeout += 0.15
         pcall(function()
-            PurchasingClient:selectionMade()
+            PurchasingClient.selectionMade()
         end)
     until timeout >= 20
-        or pcall(function()
-            assert(not Player.CurrentlySavingOrLoading.Value)
-        end)
 
     -- Restore original handler
     pcall(function()
@@ -743,7 +746,14 @@ rnd(slotLabel); pad(slotLabel, 0,0,12,12)
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
-            local slot = Player.CurrentSaveSlot.Value
+            local slot = nil
+            pcall(function() slot = Player.CurrentSaveSlot.Value end)
+            if not slot or slot <= 0 then
+                pcall(function()
+                    local s = Player.PlayerGui:FindFirstChild('CurrentSaveSlot')
+                    if s then slot = s.Value end
+                end)
+            end
             slotLabel.Text = (slot and slot > 0)
                 and ('✅  Loaded Slot:  '..tostring(slot)..'   —   Ready')
                 or  '❌  No slot loaded — load one from in-game menu!'
