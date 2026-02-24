@@ -96,6 +96,37 @@ end
 local dupeRunning = false
 local dupeSlots   = { save = 1, load = 1 }
 
+-- Helper: InvokeServer with a timeout so we never hang forever.
+-- Returns: result (any), timedOut (bool), errored (bool), errMsg (string)
+local function invokeWithTimeout(remote, timeout, ...)
+    local args = {...}
+    local result, timedOut, errored, errMsg = nil, false, false, ''
+    local done = false
+
+    task.spawn(function()
+        local ok, val = pcall(function()
+            return remote:InvokeServer(table.unpack(args))
+        end)
+        if not done then
+            done = true
+            if ok then result = val else errored = true; errMsg = tostring(val) end
+        end
+    end)
+
+    -- FIX: Use os.clock() instead of float accumulation (t += 0.1 drifts over many steps)
+    local startTime = os.clock()
+    while not done and (os.clock() - startTime) < timeout do
+        task.wait(0.1)
+    end
+
+    if not done then
+        done = true
+        timedOut = true
+    end
+
+    return result, timedOut, errored, errMsg
+end
+
 local function dupeAxe()
     if dupeRunning then
         dupeRunning = false
@@ -104,61 +135,81 @@ local function dupeAxe()
 
     local loadSlot = dupeSlots.load
 
-    -- Need land loaded so we know where to TP back after
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
-        return notify('Load your land first!')
+        return notify('❌ Load your land first!')
     end
     local plotCF = prop.OriginSquare.CFrame
 
-    -- Need axes in inventory, otherwise nothing to dupe
     if #getAxes() == 0 then
-        return notify('No axes in inventory to dupe!')
+        return notify('❌ No axes in inventory to dupe!')
     end
 
     dupeRunning = true
-    notify('Checking cooldown...')
 
-    -- Step 1: Check if load is allowed
-    local canLoad = ClientMayLoad:InvokeServer(Player)
-    if canLoad ~= true then
+    -- ── STEP 1: Cooldown check (timeout 10s) ──────────────────
+    notify('[1/4] Checking cooldown...')
+    local canLoad, t1, e1, em1 = invokeWithTimeout(ClientMayLoad, 10)
+    if t1 then
         dupeRunning = false
-        return notify('❌ Cooldown active. Wait ~60s and try again.')
+        return notify('❌ Step 1 timed out — server not responding. Try rejoining.')
+    end
+    if e1 then
+        dupeRunning = false
+        return notify('❌ Step 1 error: ' .. em1)
+    end
+    if not canLoad then
+        dupeRunning = false
+        return notify('❌ Cooldown active — wait ~60s after last load.')
     end
 
-    -- Step 2: Prime the server
-    GetMetaData:InvokeServer(Player)
-    notify('Starting dupe sequence...')
+    -- ── STEP 2: Prime metadata (timeout 10s) ──────────────────
+    notify('[2/4] Priming server...')
+    local _, t2, e2, em2 = invokeWithTimeout(GetMetaData, 10)
+    if t2 then
+        dupeRunning = false
+        return notify('❌ Step 2 timed out — server not responding.')
+    end
+    if e2 then
+        dupeRunning = false
+        return notify('❌ Step 2 error: ' .. em2)
+    end
 
-    -- Step 3: Hook SelectLoadPlot BEFORE firing RequestLoad.
-    -- The server fires this mid-way through the load sequence.
-    -- We auto-confirm so it doesn't wait on user input.
+    -- ── STEP 3: Hook SelectLoadPlot ────────────────────────────
+    notify('[3/4] Hooking plot selector...')
+    local hookFired = false
     local origHook = SelectLoadPlot.OnClientInvoke
     SelectLoadPlot.OnClientInvoke = function(_model)
-        -- Restore hook immediately so future normal loads still work
+        hookFired = true
+        notify('[3/4] Hook fired! Confirming placement...')
         SelectLoadPlot.OnClientInvoke = origHook
 
-        -- Tell server to confirm the land placement
-        pcall(function()
-            SetPropertyPurchValue:InvokeServer(true)
+        -- CRITICAL FIX: SetPropertyPurchValue:InvokeServer MUST be in task.spawn.
+        -- The server is currently blocked waiting for THIS hook (SelectLoadPlot) to return.
+        -- Calling InvokeServer here without spawning means WE also wait for the server —
+        -- but the server is waiting for us. Neither side resolves = permanent deadlock.
+        -- Spawning lets this hook return plotCF immediately while the confirm fires async.
+        task.spawn(function()
+            pcall(function()
+                SetPropertyPurchValue:InvokeServer(true)
+            end)
         end)
 
-        -- TP character back to base after server respawns us.
-        -- We wait for CharacterAdded (server-triggered) instead of a flat timer.
+        -- Wait for the server-triggered character respawn, then TP back
         task.spawn(function()
-            local newChar = Player.CharacterAdded:Wait(15)
+            notify('[4/4] Waiting for server respawn...')
+            local newChar = Player.CharacterAdded:Wait(20)
             if not newChar then
                 task.wait(3)
                 newChar = char()
             end
-            -- Give land time to fully load in
-            task.wait(2)
+            task.wait(2) -- let land render
             local c = newChar or char()
             if c and c:FindFirstChild('HumanoidRootPart') then
                 c:PivotTo(plotCF + Vector3.new(0, 6, 0))
-                notify('✅ Dupe complete! Check your axes.')
+                notify('✅ Done! Check your axes — should be doubled.')
             else
-                notify('⚠️ Could not TP back — walk to your base manually.')
+                notify('⚠️ Could not TP back. Walk to your base manually.')
             end
             dupeRunning = false
         end)
@@ -167,22 +218,24 @@ local function dupeAxe()
         return plotCF, 0
     end
 
-    -- Step 4: Fire RequestLoad — this triggers the server to:
-    --   a) Save current inventory (axes included) ← the dupe moment
-    --   b) Reset the character
-    --   c) Fire SelectLoadPlot (our hook handles it)
-    --   d) Reload the save (axes given back = doubled)
-    --
-    -- DO NOT kill the character before this point.
-    local ok, err = pcall(function()
-        RequestLoad:InvokeServer(loadSlot, Player)
-    end)
+    -- ── STEP 4: Fire RequestLoad (timeout 45s) ─────────────────
+    -- This call BLOCKS until the entire server load sequence completes.
+    -- The server fires SelectLoadPlot mid-way — our hook above handles it.
+    -- 45s timeout because land loading can genuinely take a while.
+    notify('[4/4] Firing load request — hold on...')
+    local _, t4, e4, em4 = invokeWithTimeout(RequestLoad, 45, loadSlot)
 
-    if not ok then
+    -- If RequestLoad timed out / errored AND hook never fired, something went wrong
+    if (t4 or e4) and not hookFired then
         SelectLoadPlot.OnClientInvoke = origHook
         dupeRunning = false
-        notify('❌ RequestLoad failed: ' .. tostring(err))
+        if t4 then
+            return notify('❌ Step 4 timed out — server never responded to load request. Slot correct?')
+        else
+            return notify('❌ Step 4 error: ' .. em4)
+        end
     end
+    -- If hook fired, the task.spawn inside it is already handling the TP + cleanup
 end
 
 -- ═══════════════════════════════════════════════════════
