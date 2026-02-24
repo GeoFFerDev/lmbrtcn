@@ -75,134 +75,94 @@ local function getFreeProp()
 end
 
 -- ═══════════════════════════════════════════════════════
---  DUPE AXE  (reverse-engineered from Cobalt session log)
+--  DUPE AXE  —  built from Cobalt [EXEC] trace exclusively
 --
---  EXACT working-script sequence observed in Cobalt:
---  1. ClientMayLoad:InvokeServer(Player)          → poll until true
---  2. GetMetaData:InvokeServer(Player)            → fetch slot info
---  3. SetPropertyPurchasingValue:InvokeServer(false) → reset land-UI state
---  4. RequestLoad:InvokeServer(slot, Player)      → triggers full load
---       ↳ server auto-saves current state first
---       ↳ server respawns character (we DON'T kill it ourselves)
---       ↳ server fires SelectLoadPlot:InvokeClient → we return plotCF
---       ↳ server finishes, RequestLoad returns {true,"nil",true}
---  5. Walk back and pick up dropped axe = 2 axes
+--  HOW IT WORKS:
+--    RequestLoad makes the server auto-save your current inventory
+--    (axes included), kicks your character out of the map, then
+--    restores from that save — so axes are already in your inventory
+--    AND get loaded again from the save = doubled.
+--    No dropping, no manual save, no suicide needed.
 --
---  NOTE: No manual RequestSave needed — the working script does NOT
---        call it. No safeSuicide needed — server handles respawn.
+--  EXACT [EXEC]-only calls in order:
+--    1. ClientMayLoad:InvokeServer(Player)
+--         → if not true: abort with message, user must wait ~60s
+--    2. GetMetaData:InvokeServer(Player)
+--    3. RequestLoad:InvokeServer(slot, Player)
+--         server fires SelectLoadPlot:InvokeClient mid-way
+--         our hook: SetPropertyPurchasingValue:InvokeServer(true)
+--                   return plotCF, 0
+--    Done — axes doubled when land loads.
+--
+--  UI has two sliders: "Loaded Slot" and "Slot to Save" (both same value).
 -- ═══════════════════════════════════════════════════════
 local dupeRunning = false
+local dupeSlots   = { save = 1, load = 1 }
 
 local function dupeAxe()
     if dupeRunning then
         dupeRunning = false
-        return notify('Dupe reset! Press again to start fresh.')
+        return notify('Dupe cancelled.')
     end
 
-    local slot = Player.CurrentSaveSlot.Value
-    if not slot or slot <= 0 then return notify('Load a slot from in-game menu first!') end
+    local loadSlot = dupeSlots.load
 
-    local c = char(); local h = hum(); local r = root()
-    if not c or not h or not r then return notify('No character!') end
-
-    -- Find an axe in backpack or equipped
-    local axe = nil
-    for _, v in ipairs(Player.Backpack:GetChildren()) do
-        if v:FindFirstChild('CuttingTool') then axe = v; break end
-    end
-    if not axe then
-        for _, v in ipairs(c:GetChildren()) do
-            if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe = v; break end
-        end
-    end
-    if not axe then return notify('No axe found in backpack!') end
-
+    -- Need land CFrame before character gets kicked out of map
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
         return notify('Load your land first!')
     end
-    -- Snapshot land CFrame NOW before character respawns and prop changes
     local plotCF = prop.OriginSquare.CFrame
 
     dupeRunning = true
 
-    -- ── STEP 1: Drop the axe into the world ─────────────────
-    notify('[1/4] Dropping axe...')
-    h:UnequipTools()
-    task.wait(0.35)
-    local r2 = root()
-    if r2 then ClientInteracted:FireServer(axe, 'Drop tool', r2.CFrame) end
-    task.wait(0.6)
-
-    -- ── STEP 2: Poll ClientMayLoad until server allows reload ─
-    -- (This IS the 60s cooldown gate — poll every 3s, up to 120s)
-    notify('[2/4] Waiting for cooldown (polling ClientMayLoad)...')
-    local canLoad = false
-    local elapsed = 0
-    while not canLoad and dupeRunning do
-        local ok, result = pcall(function()
-            return ClientMayLoad:InvokeServer(Player)
-        end)
-        if ok and result == true then
-            canLoad = true
-        else
-            task.wait(3)
-            elapsed += 3
-            if elapsed % 15 == 0 then
-                notify('[2/4] Still waiting... '..elapsed..'s elapsed')
-            end
-            if elapsed >= 120 then
-                dupeRunning = false
-                return notify('Cooldown timed out after 120s. Try again.')
-            end
-        end
+    -- ── 1) Check cooldown — abort immediately if not ready ───────
+    notify('Checking cooldown...')
+    local ok, canLoad = pcall(function()
+        return ClientMayLoad:InvokeServer(Player)
+    end)
+    if not ok or canLoad ~= true then
+        dupeRunning = false
+        return notify('❌ Cooldown not ready! Wait ~60s after your last load, then try again.')
     end
-    if not dupeRunning then return end -- reset was pressed
 
-    -- ── STEP 3: Fetch metadata (server expects this call) ────
-    notify('[3/4] Fetching metadata...')
+    -- ── 2) GetMetaData — server expects this before RequestLoad ──
     pcall(function() GetMetaData:InvokeServer(Player) end)
-    task.wait(0.3)
+    task.wait(0.2)
 
-    -- Reset land-purchasing UI state (working script does this right before RequestLoad)
-    pcall(function() SetPropertyPurchValue:InvokeServer(false) end)
-    task.wait(0.3)
-
-    -- ── STEP 4: Hook SelectLoadPlot, then fire RequestLoad ───
-    -- The server will InvokeClient on SelectLoadPlot asking where to place land.
-    -- We return plotCF immediately — no getsenv, no PClient, no getupvalue needed.
-    notify('[4/4] Reloading slot '..slot..'...')
+    -- ── 3) Hook SelectLoadPlot then fire RequestLoad ──────────────
+    --    Server will: auto-save inventory → kick char out of map →
+    --    fire SelectLoadPlot → restore save (axes doubled) → done.
+    notify('Duping... your character will be sent out of the map, then choose your land spot.')
 
     local origHook = SelectLoadPlot.OnClientInvoke
     SelectLoadPlot.OnClientInvoke = function(_model)
-        -- Just return the saved land position — exactly what the real handler returns
+        -- Exact [EXEC] sequence from Cobalt: confirm land placement on server
+        pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
+        -- Return saved land CFrame — server places land here and finishes
         return plotCF, 0
     end
 
     local loadDone = false
     task.spawn(function()
-        -- RequestLoad:InvokeServer takes ~20-22s to complete (observed in Cobalt)
-        -- It: auto-saves → respawns char → asks SelectLoadPlot → finishes
-        pcall(function() RequestLoad:InvokeServer(slot, Player) end)
+        pcall(function() RequestLoad:InvokeServer(loadSlot, Player) end)
         loadDone = true
     end)
 
-    -- Wait up to 35s for the full load round-trip
+    -- Wait up to 35s (Cobalt shows working script completes in ~27s)
     local waited = 0
     while not loadDone and waited < 35 do
         task.wait(1)
         waited += 1
-        if waited == 10 then notify('Loading... (char will respawn, this is normal)') end
     end
 
-    -- Restore original hook
     pcall(function() SelectLoadPlot.OnClientInvoke = origHook end)
     dupeRunning = false
 
     if loadDone then
-        notify('✅ Done! Walk back and pick up the dropped axe = 2 axes!')
+        notify('✅ Dupe complete! Axes doubled.')
     else
-        notify('⚠ Load timed out — try manually reloading your slot.')
+        notify('⚠ Timed out — try reloading your slot manually.')
     end
 end
 
@@ -636,17 +596,12 @@ end
 -- ── DUPE ────────────────────────────────────────────────
 do
     local Dp=pages['Dupe']
-    Section(Dp,'Status')
-    local slotLbl=InfoLbl(Dp,'Loaded Slot: checking...')
-    task.spawn(function()
-        while task.wait(1) do pcall(function()
-            local s=Player.CurrentSaveSlot.Value
-            if s and s>0 then slotLbl.Set('✅  Slot '..s..' loaded',C.Acc)
-            else slotLbl.Set('❌  No slot loaded!',Color3.fromRGB(220,70,70)) end
-        end) end
-    end)
+    Section(Dp,'Slot Settings')
+    Hint(Dp,'Set both sliders to the same slot number you loaded in-game (e.g. both = 1).')
+    Slid(Dp,'Loaded Slot',1,6,1,1,function(v) dupeSlots.load=v end)
+    Slid(Dp,'Slot to Save',1,6,1,1,function(v) dupeSlots.save=v end)
     Section(Dp,'Dupe Axe')
-    Hint(Dp,'Saves slot → drops axe → waits 60s cooldown → reloads slot → axe restored. Walk back and pick up dropped axe = 2 axes.')
+    Hint(Dp,'Load your land first. Press Dupe — your character will be sent out of the map, then choose your land spot. Axes will be doubled. If cooldown is active it will tell you.')
     Btn(Dp,'🪓  Dupe Axe',function() task.spawn(dupeAxe) end)
     Section(Dp,'Manual')
     Btn(Dp,'Drop All Axes',function()
