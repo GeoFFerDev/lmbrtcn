@@ -329,7 +329,7 @@ local C={
     Th=Color3.fromRGB(235,240,252), Dng=Color3.fromRGB(200,50,50),
     Sep=Color3.fromRGB(28,38,58),
 }
-local SW=68; local WW=330; local WH=385; local TH=38; local BH=46
+local SW=52; local WW=400; local WH=220; local TH=30; local BH=34
 
 local function N(cls,p)
     local o=Instance.new(cls)
@@ -353,41 +353,41 @@ local SG = N('ScreenGui',{Name='DeltaHub',ResetOnSpawn=false,IgnoreGuiInset=true
     DisplayOrder=999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,Parent=gp})
 
 -- Minimised pill (shown when window is hidden)
-local Pill = N('TextButton',{Text='▲  Delta Hub',Size=UDim2.new(0,110,0,34),
-    Position=UDim2.new(0.5,-55,0,14),BackgroundColor3=C.Panel,
-    Font=Enum.Font.GothamBold,TextSize=12,TextColor3=C.Acc,
+local Pill = N('TextButton',{Text='▲  Delta Hub',Size=UDim2.new(0,110,0,28),
+    Position=UDim2.new(0,12,0,12),BackgroundColor3=C.Panel,
+    Font=Enum.Font.GothamBold,TextSize=11,TextColor3=C.Acc,
     BorderSizePixel=0,Visible=false,ZIndex=50,Parent=SG})
 rnd(Pill,UDim.new(0,18)); strk(Pill,C.AccD,1)
 
 -- Main window
 local Main = N('Frame',{Name='Main',Size=UDim2.new(0,WW,0,WH),
-    Position=UDim2.new(0.5,-WW/2,0.45,-WH/2),
+    Position=UDim2.new(0,12,0,12),
     BackgroundColor3=C.BG,BorderSizePixel=0,ClipsDescendants=true,Parent=SG})
 rnd(Main,UDim.new(0,12)); strk(Main,Color3.fromRGB(32,46,70),1)
 
 -- Title bar
 local TBar=N('Frame',{Size=UDim2.new(1,0,0,TH),BackgroundColor3=C.Panel,BorderSizePixel=0,ZIndex=6,Parent=Main})
-local dot=N('Frame',{Size=UDim2.new(0,7,0,7),Position=UDim2.new(0,12,0.5,-3),BackgroundColor3=C.Acc,BorderSizePixel=0,ZIndex=7,Parent=TBar})
+local dot=N('Frame',{Size=UDim2.new(0,6,0,6),Position=UDim2.new(0,10,0.5,-3),BackgroundColor3=C.Acc,BorderSizePixel=0,ZIndex=7,Parent=TBar})
 rnd(dot,UDim.new(1,0))
-N('TextLabel',{Text='Delta Hub',Size=UDim2.new(0,120,1,0),Position=UDim2.new(0,26,0,0),
-    BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=14,
+N('TextLabel',{Text='Delta Hub',Size=UDim2.new(0,100,1,0),Position=UDim2.new(0,22,0,0),
+    BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=12,
     TextColor3=C.TP,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=7,Parent=TBar})
-N('TextLabel',{Text='LT2',Size=UDim2.new(0,35,1,0),Position=UDim2.new(0,148,0,0),
-    BackgroundTransparency=1,Font=Enum.Font.Gotham,TextSize=11,
+N('TextLabel',{Text='LT2',Size=UDim2.new(0,30,1,0),Position=UDim2.new(0,124,0,0),
+    BackgroundTransparency=1,Font=Enum.Font.Gotham,TextSize=10,
     TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=7,Parent=TBar})
 N('Frame',{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=C.Sep,BorderSizePixel=0,ZIndex=6,Parent=TBar})
 
 -- Close button
-local CloseBtn=N('TextButton',{Text='✕',Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-34,0.5,-14),
+local CloseBtn=N('TextButton',{Text='✕',Size=UDim2.new(0,22,0,22),Position=UDim2.new(1,-26,0.5,-11),
     BackgroundColor3=C.Dng,BackgroundTransparency=0.3,Font=Enum.Font.GothamBold,
-    TextSize=13,TextColor3=C.TP,BorderSizePixel=0,ZIndex=8,Parent=TBar})
-rnd(CloseBtn,UDim.new(0,6))
+    TextSize=11,TextColor3=C.TP,BorderSizePixel=0,ZIndex=8,Parent=TBar})
+rnd(CloseBtn,UDim.new(0,5))
 
 -- Minimise button
-local MinBtn=N('TextButton',{Text='─',Size=UDim2.new(0,28,0,28),Position=UDim2.new(1,-66,0.5,-14),
+local MinBtn=N('TextButton',{Text='─',Size=UDim2.new(0,22,0,22),Position=UDim2.new(1,-52,0.5,-11),
     BackgroundColor3=C.El,BackgroundTransparency=0.2,Font=Enum.Font.GothamBold,
-    TextSize=16,TextColor3=C.TS,BorderSizePixel=0,ZIndex=8,Parent=TBar})
-rnd(MinBtn,UDim.new(0,6))
+    TextSize=13,TextColor3=C.TS,BorderSizePixel=0,ZIndex=8,Parent=TBar})
+rnd(MinBtn,UDim.new(0,5))
 
 -- Minimise / Restore logic
 local function minimize()
@@ -449,7 +449,7 @@ local Content=N('ScrollingFrame',{Size=UDim2.new(1,-SW,1,0),Position=UDim2.new(0
     BackgroundTransparency=1,ScrollBarThickness=3,ScrollBarImageColor3=C.Acc,
     ScrollingDirection=Enum.ScrollingDirection.Y,ElasticBehavior=Enum.ElasticBehavior.Never,
     CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=Body})
-pd(Content,10,14,10,10); vl(Content,8)
+pd(Content,6,10,8,8); vl(Content,5)
 
 -- ─── TABS ────────────────────────────────────────────
 local TABS={'Dupe','Land','Axe','Player','Wood'}
@@ -471,9 +471,9 @@ local function switchTab(name)
 end
 
 for _,name in ipairs(TABS) do
-    local btn=N('TextButton',{Text=ICONS[name]..'\n'..name,Size=UDim2.new(1,0,0,56),
-        BackgroundColor3=C.Panel,Font=Enum.Font.GothamBold,TextSize=10,
-        TextColor3=C.TS,TextWrapped=true,BorderSizePixel=0,Parent=TabList})
+    local btn=N('TextButton',{Text=ICONS[name]..'\n'..name,Size=UDim2.new(1,0,0,36),
+        BackgroundColor3=C.Panel,Font=Enum.Font.GothamBold,TextSize=9,
+        TextColor3=C.TS,TextWrapped=false,BorderSizePixel=0,Parent=TabList})
     local ln=N('Frame',{Name='Ln',Size=UDim2.new(0,3,0.5,0),Position=UDim2.new(1,-3,0.25,0),
         BackgroundColor3=C.Acc,BackgroundTransparency=1,BorderSizePixel=0,Parent=btn})
     rnd(ln,UDim.new(0,2)); tabBtns[name]=btn
@@ -487,9 +487,9 @@ end
 
 -- ─── COMPONENTS ──────────────────────────────────────
 local function Section(p,txt)
-    local f=N('Frame',{Size=UDim2.new(1,0,0,24),BackgroundTransparency=1,Parent=p})
-    N('TextLabel',{Text=txt:upper(),Size=UDim2.new(1,-4,0,14),Position=UDim2.new(0,2,0,6),
-        BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=9,
+    local f=N('Frame',{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,Parent=p})
+    N('TextLabel',{Text=txt:upper(),Size=UDim2.new(1,-4,0,12),Position=UDim2.new(0,2,0,4),
+        BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=8,
         TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=f})
     N('Frame',{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=C.Sep,BorderSizePixel=0,Parent=f})
 end
@@ -497,24 +497,24 @@ end
 local function Hint(p,txt)
     local l=N('TextLabel',{Text=txt,Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
         BackgroundColor3=C.El,BackgroundTransparency=0.4,BorderSizePixel=0,
-        Font=Enum.Font.Gotham,TextSize=11,TextColor3=C.TS,
+        Font=Enum.Font.Gotham,TextSize=10,TextColor3=C.TS,
         TextXAlignment=Enum.TextXAlignment.Left,TextWrapped=true,Parent=p})
-    rnd(l,UDim.new(0,6)); pd(l,7,7,10,10)
+    rnd(l,UDim.new(0,5)); pd(l,5,5,8,8)
 end
 
 local function InfoLbl(p,txt)
     local l=N('TextLabel',{Text=txt,Size=UDim2.new(1,0,0,BH),
         BackgroundColor3=C.El,BackgroundTransparency=0,BorderSizePixel=0,
-        Font=Enum.Font.GothamBold,TextSize=13,TextColor3=C.TP,
+        Font=Enum.Font.GothamBold,TextSize=11,TextColor3=C.TP,
         TextXAlignment=Enum.TextXAlignment.Left,Parent=p})
-    rnd(l); pd(l,0,0,12,12)
+    rnd(l); pd(l,0,0,10,10)
     return {Set=function(v,col) l.Text=v; if col then l.TextColor3=col end end}
 end
 
 local function Btn(p,txt,cb,danger)
     local b=N('TextButton',{Size=UDim2.new(1,0,0,BH),
         BackgroundColor3=danger and C.Dng or C.El,BackgroundTransparency=danger and 0.3 or 0,
-        Font=Enum.Font.GothamBold,TextSize=13,
+        Font=Enum.Font.GothamBold,TextSize=11,
         TextColor3=danger and Color3.fromRGB(255,200,200) or C.Acc,
         Text=txt,BorderSizePixel=0,Parent=p})
     rnd(b); strk(b,danger and Color3.fromRGB(140,30,30) or C.AccD,1)
@@ -531,19 +531,19 @@ local function Tog(p,txt,def,cb)
     local st=def or false
     local row=N('Frame',{Size=UDim2.new(1,0,0,BH),BackgroundColor3=C.El,BorderSizePixel=0,Parent=p})
     rnd(row)
-    N('TextLabel',{Text=txt,Size=UDim2.new(1,-58,1,0),Position=UDim2.new(0,12,0,0),
-        BackgroundTransparency=1,Font=Enum.Font.Gotham,TextSize=13,TextColor3=C.TP,
+    N('TextLabel',{Text=txt,Size=UDim2.new(1,-52,1,0),Position=UDim2.new(0,10,0,0),
+        BackgroundTransparency=1,Font=Enum.Font.Gotham,TextSize=11,TextColor3=C.TP,
         TextXAlignment=Enum.TextXAlignment.Left,TextTruncate=Enum.TextTruncate.AtEnd,Parent=row})
-    local tr=N('Frame',{Size=UDim2.new(0,44,0,24),Position=UDim2.new(1,-52,0.5,-12),
+    local tr=N('Frame',{Size=UDim2.new(0,38,0,20),Position=UDim2.new(1,-44,0.5,-10),
         BackgroundColor3=st and C.TOn or C.TOff,BorderSizePixel=0,Parent=row})
     rnd(tr,UDim.new(1,0))
-    local th=N('Frame',{Size=UDim2.new(0,18,0,18),
-        Position=st and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9),
+    local th=N('Frame',{Size=UDim2.new(0,15,0,15),
+        Position=st and UDim2.new(1,-18,0.5,-7) or UDim2.new(0,3,0.5,-7),
         BackgroundColor3=C.Th,BorderSizePixel=0,Parent=tr})
     rnd(th,UDim.new(1,0))
     local function set(s)
         st=s; tw(tr,{BackgroundColor3=s and C.TOn or C.TOff})
-        tw(th,{Position=s and UDim2.new(1,-21,0.5,-9) or UDim2.new(0,3,0.5,-9)})
+        tw(th,{Position=s and UDim2.new(1,-18,0.5,-7) or UDim2.new(0,3,0.5,-7)})
         if cb then task.spawn(pcall,cb,s) end
     end
     local hit=N('TextButton',{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Text='',Parent=row})
@@ -554,24 +554,24 @@ end
 
 local function Slid(p,txt,mn,mx,def,step,cb)
     local val=def
-    local row=N('Frame',{Size=UDim2.new(1,0,0,62),BackgroundColor3=C.El,BorderSizePixel=0,Parent=p})
+    local row=N('Frame',{Size=UDim2.new(1,0,0,52),BackgroundColor3=C.El,BorderSizePixel=0,Parent=p})
     rnd(row)
-    local top=N('Frame',{Size=UDim2.new(1,-20,0,28),Position=UDim2.new(0,10,0,7),BackgroundTransparency=1,Parent=row})
+    local top=N('Frame',{Size=UDim2.new(1,-16,0,24),Position=UDim2.new(0,8,0,5),BackgroundTransparency=1,Parent=row})
     N('TextLabel',{Text=txt,Size=UDim2.new(0.65,0,1,0),BackgroundTransparency=1,
-        Font=Enum.Font.Gotham,TextSize=13,TextColor3=C.TP,TextXAlignment=Enum.TextXAlignment.Left,Parent=top})
+        Font=Enum.Font.Gotham,TextSize=11,TextColor3=C.TP,TextXAlignment=Enum.TextXAlignment.Left,Parent=top})
     local vl2=N('TextLabel',{Text=tostring(val),Size=UDim2.new(0.35,0,1,0),Position=UDim2.new(0.65,0,0,0),
-        BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=13,
+        BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=11,
         TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Right,Parent=top})
-    local bg=N('Frame',{Size=UDim2.new(1,-20,0,6),Position=UDim2.new(0,10,0,44),BackgroundColor3=C.Sep,BorderSizePixel=0,Parent=row})
+    local bg=N('Frame',{Size=UDim2.new(1,-16,0,5),Position=UDim2.new(0,8,0,36),BackgroundColor3=C.Sep,BorderSizePixel=0,Parent=row})
     rnd(bg,UDim.new(1,0))
     local p0=(val-mn)/(mx-mn)
     local fi=N('Frame',{Size=UDim2.new(p0,0,1,0),BackgroundColor3=C.Acc,BorderSizePixel=0,Parent=bg}); rnd(fi,UDim.new(1,0))
-    local kn=N('Frame',{Size=UDim2.new(0,18,0,18),Position=UDim2.new(p0,-9,0.5,-9),BackgroundColor3=C.Th,BorderSizePixel=0,ZIndex=3,Parent=bg})
+    local kn=N('Frame',{Size=UDim2.new(0,14,0,14),Position=UDim2.new(p0,-7,0.5,-7),BackgroundColor3=C.Th,BorderSizePixel=0,ZIndex=3,Parent=bg})
     rnd(kn,UDim.new(1,0)); strk(kn,C.AccD,1.5)
     local function sv(v)
         v=math.clamp(math.round((v-mn)/step)*step+mn,mn,mx); val=v
         local pp=(v-mn)/(mx-mn)
-        tw(fi,{Size=UDim2.new(pp,0,1,0)},0.05); tw(kn,{Position=UDim2.new(pp,-9,0.5,-9)},0.05)
+        tw(fi,{Size=UDim2.new(pp,0,1,0)},0.05); tw(kn,{Position=UDim2.new(pp,-7,0.5,-7)},0.05)
         vl2.Text=tostring(v); if cb then task.spawn(pcall,cb,v) end
     end
     local sd=false
