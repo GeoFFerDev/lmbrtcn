@@ -27,7 +27,9 @@ local AxeFolder               = ReplicatedStorage.AxeClasses
 local RequestLoad             = ReplicatedStorage.LoadSaveRequests.RequestLoad
 local RequestSave             = ReplicatedStorage.LoadSaveRequests.RequestSave
 local ClientMayLoad           = ReplicatedStorage.LoadSaveRequests.ClientMayLoad
+local GetMetaData             = ReplicatedStorage.LoadSaveRequests.GetMetaData
 local SelectLoadPlot          = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
+local SetPropertyPurchValue   = ReplicatedStorage.PropertyPurchasing.SetPropertyPurchasingValue
 local ClientPurchasedProperty = ReplicatedStorage.PropertyPurchasing.ClientPurchasedProperty
 local ClientExpandedProperty  = ReplicatedStorage.PropertyPurchasing.ClientExpandedProperty
 
@@ -73,21 +75,26 @@ local function getFreeProp()
 end
 
 -- ═══════════════════════════════════════════════════════
---  DUPE AXE
---  Correct order:
---  1. RequestSave NOW  → save file has axe
---  2. Drop axe         → axe in world, save unchanged
---  3. safeSuicide      → character resets (matches working-script behavior)
---  4. Wait respawn + cooldown
---  5. Hook SelectLoadPlot → return plotCF directly (NO getsenv/PClient needed)
---  6. RequestLoad      → save restores axe to inventory
---  7. Pick up world axe = 2 axes
+--  DUPE AXE  (reverse-engineered from Cobalt session log)
+--
+--  EXACT working-script sequence observed in Cobalt:
+--  1. ClientMayLoad:InvokeServer(Player)          → poll until true
+--  2. GetMetaData:InvokeServer(Player)            → fetch slot info
+--  3. SetPropertyPurchasingValue:InvokeServer(false) → reset land-UI state
+--  4. RequestLoad:InvokeServer(slot, Player)      → triggers full load
+--       ↳ server auto-saves current state first
+--       ↳ server respawns character (we DON'T kill it ourselves)
+--       ↳ server fires SelectLoadPlot:InvokeClient → we return plotCF
+--       ↳ server finishes, RequestLoad returns {true,"nil",true}
+--  5. Walk back and pick up dropped axe = 2 axes
+--
+--  NOTE: No manual RequestSave needed — the working script does NOT
+--        call it. No safeSuicide needed — server handles respawn.
 -- ═══════════════════════════════════════════════════════
 local dupeRunning = false
 
 local function dupeAxe()
     if dupeRunning then
-        -- Second press = force reset if stuck
         dupeRunning = false
         return notify('Dupe reset! Press again to start fresh.')
     end
@@ -98,6 +105,7 @@ local function dupeAxe()
     local c = char(); local h = hum(); local r = root()
     if not c or not h or not r then return notify('No character!') end
 
+    -- Find an axe in backpack or equipped
     local axe = nil
     for _, v in ipairs(Player.Backpack:GetChildren()) do
         if v:FindFirstChild('CuttingTool') then axe = v; break end
@@ -107,80 +115,94 @@ local function dupeAxe()
             if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe = v; break end
         end
     end
-    if not axe then return notify('No axe found!') end
+    if not axe then return notify('No axe found in backpack!') end
 
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
         return notify('Load your land first!')
     end
+    -- Snapshot land CFrame NOW before character respawns and prop changes
     local plotCF = prop.OriginSquare.CFrame
 
     dupeRunning = true
 
-    -- 1) Save slot so save file records the axe in inventory
-    notify('[1/5] Saving slot '..slot..'...')
-    pcall(function() RequestSave:InvokeServer(slot, Player) end)
-    task.wait(2)
-
-    -- 2) Unequip + drop axe into world
-    notify('[2/5] Dropping axe...')
+    -- ── STEP 1: Drop the axe into the world ─────────────────
+    notify('[1/4] Dropping axe...')
     h:UnequipTools()
-    task.wait(0.3)
-    -- Re-grab references after unequip
+    task.wait(0.35)
     local r2 = root()
     if r2 then ClientInteracted:FireServer(axe, 'Drop tool', r2.CFrame) end
-    task.wait(0.5)
+    task.wait(0.6)
 
-    -- 3) Kill character — resets state, matches working-script behavior
-    notify('[3/5] Resetting character...')
-    safeSuicide()
-
-    -- Wait for character to fully respawn before continuing
-    local respawnTimer = 0
-    repeat
-        task.wait(0.2)
-        respawnTimer += 0.2
-    until (char() and hum() and root()) or respawnTimer >= 12
-    task.wait(1.5) -- extra settle time after spawn
-
-    -- 4) Wait out the 60s load cooldown
-    --    We count from 0 because suicide already used ~2-3s
-    notify('[4/5] Waiting cooldown...')
-    for i = 62, 1, -1 do
-        task.wait(1)
-        if i == 45 or i == 30 or i == 15 or i <= 5 then
-            notify('[4/5] ~'..i..'s remaining...')
+    -- ── STEP 2: Poll ClientMayLoad until server allows reload ─
+    -- (This IS the 60s cooldown gate — poll every 3s, up to 120s)
+    notify('[2/4] Waiting for cooldown (polling ClientMayLoad)...')
+    local canLoad = false
+    local elapsed = 0
+    while not canLoad and dupeRunning do
+        local ok, result = pcall(function()
+            return ClientMayLoad:InvokeServer(Player)
+        end)
+        if ok and result == true then
+            canLoad = true
+        else
+            task.wait(3)
+            elapsed += 3
+            if elapsed % 15 == 0 then
+                notify('[2/4] Still waiting... '..elapsed..'s elapsed')
+            end
+            if elapsed >= 120 then
+                dupeRunning = false
+                return notify('Cooldown timed out after 120s. Try again.')
+            end
         end
     end
+    if not dupeRunning then return end -- reset was pressed
 
-    -- 5) Hook SelectLoadPlot + invoke RequestLoad
-    --    THE FIX: just return plotCF directly — no getsenv / PClient / getupvalue needed.
-    --    SelectLoadPlot:InvokeClient only needs a CFrame back; we already have it.
-    notify('[5/5] Reloading slot '..slot..'...')
+    -- ── STEP 3: Fetch metadata (server expects this call) ────
+    notify('[3/4] Fetching metadata...')
+    pcall(function() GetMetaData:InvokeServer(Player) end)
+    task.wait(0.3)
+
+    -- Reset land-purchasing UI state (working script does this right before RequestLoad)
+    pcall(function() SetPropertyPurchValue:InvokeServer(false) end)
+    task.wait(0.3)
+
+    -- ── STEP 4: Hook SelectLoadPlot, then fire RequestLoad ───
+    -- The server will InvokeClient on SelectLoadPlot asking where to place land.
+    -- We return plotCF immediately — no getsenv, no PClient, no getupvalue needed.
+    notify('[4/4] Reloading slot '..slot..'...')
 
     local origHook = SelectLoadPlot.OnClientInvoke
     SelectLoadPlot.OnClientInvoke = function(_model)
-        -- Simply confirm the same land position. Done.
+        -- Just return the saved land position — exactly what the real handler returns
         return plotCF, 0
     end
 
-    local done = false
+    local loadDone = false
     task.spawn(function()
+        -- RequestLoad:InvokeServer takes ~20-22s to complete (observed in Cobalt)
+        -- It: auto-saves → respawns char → asks SelectLoadPlot → finishes
         pcall(function() RequestLoad:InvokeServer(slot, Player) end)
-        done = true
+        loadDone = true
     end)
 
-    -- Wait up to 25s for the invoke round-trip
-    local t = 0
-    repeat task.wait(0.5); t += 0.5 until done or t >= 25
+    -- Wait up to 35s for the full load round-trip
+    local waited = 0
+    while not loadDone and waited < 35 do
+        task.wait(1)
+        waited += 1
+        if waited == 10 then notify('Loading... (char will respawn, this is normal)') end
+    end
 
+    -- Restore original hook
     pcall(function() SelectLoadPlot.OnClientInvoke = origHook end)
     dupeRunning = false
 
-    if done then
+    if loadDone then
         notify('✅ Done! Walk back and pick up the dropped axe = 2 axes!')
     else
-        notify('⚠ Reload timed out — try manually reloading your slot.')
+        notify('⚠ Load timed out — try manually reloading your slot.')
     end
 end
 
