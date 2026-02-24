@@ -77,10 +77,11 @@ end
 --  Correct order:
 --  1. RequestSave NOW  → save file has axe
 --  2. Drop axe         → axe in world, save unchanged
---  3. Wait cooldown    → ClientMayLoad clears
---  4. Hook SelectLoadPlot → auto-confirm land same spot
---  5. RequestLoad      → save restores axe to inventory
---  6. Pick up world axe = 2 axes
+--  3. safeSuicide      → character resets (matches working-script behavior)
+--  4. Wait respawn + cooldown
+--  5. Hook SelectLoadPlot → return plotCF directly (NO getsenv/PClient needed)
+--  6. RequestLoad      → save restores axe to inventory
+--  7. Pick up world axe = 2 axes
 -- ═══════════════════════════════════════════════════════
 local dupeRunning = false
 
@@ -92,18 +93,18 @@ local function dupeAxe()
     end
 
     local slot = Player.CurrentSaveSlot.Value
-    if not slot or slot<=0 then return notify('Load a slot from in-game menu first!') end
+    if not slot or slot <= 0 then return notify('Load a slot from in-game menu first!') end
 
-    local c=char(); local h=hum(); local r=root()
+    local c = char(); local h = hum(); local r = root()
     if not c or not h or not r then return notify('No character!') end
 
-    local axe=nil
-    for _,v in ipairs(Player.Backpack:GetChildren()) do
-        if v:FindFirstChild('CuttingTool') then axe=v; break end
+    local axe = nil
+    for _, v in ipairs(Player.Backpack:GetChildren()) do
+        if v:FindFirstChild('CuttingTool') then axe = v; break end
     end
     if not axe then
-        for _,v in ipairs(c:GetChildren()) do
-            if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe=v; break end
+        for _, v in ipairs(c:GetChildren()) do
+            if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe = v; break end
         end
     end
     if not axe then return notify('No axe found!') end
@@ -116,67 +117,70 @@ local function dupeAxe()
 
     dupeRunning = true
 
-    -- 1) Save slot NOW so save file records the axe
-    notify('[1/4] Saving slot '..slot..'...')
+    -- 1) Save slot so save file records the axe in inventory
+    notify('[1/5] Saving slot '..slot..'...')
     pcall(function() RequestSave:InvokeServer(slot, Player) end)
-    task.wait(1.5)
+    task.wait(2)
 
     -- 2) Unequip + drop axe into world
-    notify('[2/4] Dropping axe...')
-    h:UnequipTools(); task.wait(0.3)
-    ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame)
+    notify('[2/5] Dropping axe...')
+    h:UnequipTools()
+    task.wait(0.3)
+    -- Re-grab references after unequip
+    local r2 = root()
+    if r2 then ClientInteracted:FireServer(axe, 'Drop tool', r2.CFrame) end
     task.wait(0.5)
 
-    -- 3) Fixed 65s wait — the server enforces ~60s between loads
-    --    ClientMayLoad polling is unreliable client-side, just wait.
-    notify('[3/4] Waiting 65s cooldown...')
-    for i = 65, 1, -1 do
+    -- 3) Kill character — resets state, matches working-script behavior
+    notify('[3/5] Resetting character...')
+    safeSuicide()
+
+    -- Wait for character to fully respawn before continuing
+    local respawnTimer = 0
+    repeat
+        task.wait(0.2)
+        respawnTimer += 0.2
+    until (char() and hum() and root()) or respawnTimer >= 12
+    task.wait(1.5) -- extra settle time after spawn
+
+    -- 4) Wait out the 60s load cooldown
+    --    We count from 0 because suicide already used ~2-3s
+    notify('[4/5] Waiting cooldown...')
+    for i = 62, 1, -1 do
         task.wait(1)
-        if i == 60 or i == 45 or i == 30 or i == 15 or i <= 5 then
-            notify('[3/4] '..i..'s remaining...')
+        if i == 45 or i == 30 or i == 15 or i <= 5 then
+            notify('[4/5] ~'..i..'s remaining...')
         end
     end
 
-    -- 4) Hook SelectLoadPlot properly:
-    --    Must call enterPurchaseMode + selectionMade exactly like real handler
-    notify('[4/4] Reloading slot '..slot..'...')
-    local PClient = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
-    local origHook = SelectLoadPlot.OnClientInvoke
+    -- 5) Hook SelectLoadPlot + invoke RequestLoad
+    --    THE FIX: just return plotCF directly — no getsenv / PClient / getupvalue needed.
+    --    SelectLoadPlot:InvokeClient only needs a CFrame back; we already have it.
+    notify('[5/5] Reloading slot '..slot..'...')
 
-    SelectLoadPlot.OnClientInvoke = function(model)
-        -- Enter land placement mode (non-blocking)
-        pcall(function() PClient.enterPurchaseMode(0, false, model) end)
-        task.wait(0.15)
-        -- Immediately confirm placement at saved position
-        pcall(function() PClient:selectionMade() end)
-        task.wait(0.15)
-        -- Return the CFrame stored internally by enterPurchaseMode (upvalue 10)
-        local cf = plotCF
-        pcall(function() cf = getupvalue(PClient.enterPurchaseMode, 10) or plotCF end)
-        return cf, 0
+    local origHook = SelectLoadPlot.OnClientInvoke
+    SelectLoadPlot.OnClientInvoke = function(_model)
+        -- Simply confirm the same land position. Done.
+        return plotCF, 0
     end
 
-    -- Invoke RequestLoad — server will call our SelectLoadPlot hook
     local done = false
     task.spawn(function()
         pcall(function() RequestLoad:InvokeServer(slot, Player) end)
         done = true
     end)
 
-    -- Keep spamming selectionMade as belt-and-suspenders
+    -- Wait up to 25s for the invoke round-trip
     local t = 0
-    repeat
-        task.wait(0.2); t += 0.2
-        pcall(function() PClient:selectionMade() end)
-    until done or t >= 20
+    repeat task.wait(0.5); t += 0.5 until done or t >= 25
 
     pcall(function() SelectLoadPlot.OnClientInvoke = origHook end)
     dupeRunning = false
 
     if done then
-        notify('Done! Walk back and pick up the dropped axe = 2 axes!')
+        notify('✅ Done! Walk back and pick up the dropped axe = 2 axes!')
     else
-        notify('Reload timed out — try manually reloading your slot.')
+        notify('⚠ Reload timed out — try manually reloading your slot.')
     end
 end
 
