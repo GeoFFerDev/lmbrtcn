@@ -175,67 +175,80 @@ local function dupeAxe()
         return notify('❌ Step 2 error: ' .. em2)
     end
 
-    -- ── STEP 3: Hook SelectLoadPlot ────────────────────────────
-    notify('[3/4] Hooking plot selector...')
+    -- ── STEP 3: Install the SelectLoadPlot hook ───────────────────
+    -- The hook has its OWN 60s timeout, completely independent of RequestLoad.
+    --
+    -- WHY: RequestLoad:InvokeServer will be killed by Roblox when the server
+    -- resets our character mid-flow. That's EXPECTED — it's part of the dupe.
+    -- But that means we can't rely on RequestLoad finishing cleanly to know if
+    -- the hook fired or not. The hook must manage its own lifetime.
+    notify('[3/4] Hook installed. Firing load request...')
     local hookFired = false
     local origHook = SelectLoadPlot.OnClientInvoke
+
+    -- Hook timeout watchdog — runs independently, cleans up if server never calls us
+    task.spawn(function()
+        local start = os.clock()
+        while not hookFired and (os.clock() - start) < 60 do
+            task.wait(0.5)
+        end
+        if not hookFired then
+            -- Server never called SelectLoadPlot — slot wrong or server error
+            SelectLoadPlot.OnClientInvoke = origHook
+            dupeRunning = false
+            notify('❌ Server never requested plot selection — wrong slot, or no save in that slot.')
+        end
+    end)
+
     SelectLoadPlot.OnClientInvoke = function(_model)
         hookFired = true
-        notify('[3/4] Hook fired! Confirming placement...')
         SelectLoadPlot.OnClientInvoke = origHook
+        notify('[3/4] Hook fired! Server is loading land...')
 
-        -- CRITICAL FIX: SetPropertyPurchValue:InvokeServer MUST be in task.spawn.
-        -- The server is currently blocked waiting for THIS hook (SelectLoadPlot) to return.
-        -- Calling InvokeServer here without spawning means WE also wait for the server —
-        -- but the server is waiting for us. Neither side resolves = permanent deadlock.
-        -- Spawning lets this hook return plotCF immediately while the confirm fires async.
+        -- Fire SetPropertyPurchValue in its own thread.
+        -- The server is currently blocked waiting for THIS hook to return,
+        -- so InvokeServer here would deadlock if called directly.
         task.spawn(function()
             pcall(function()
                 SetPropertyPurchValue:InvokeServer(true)
             end)
         end)
 
-        -- Wait for the server-triggered character respawn, then TP back
+        -- Wait for the server-triggered respawn then TP back to base
         task.spawn(function()
-            notify('[4/4] Waiting for server respawn...')
-            local newChar = Player.CharacterAdded:Wait(20)
+            notify('[4/4] Waiting for respawn...')
+            -- Server resets character as part of loading — wait for that
+            local newChar = Player.CharacterAdded:Wait(25)
             if not newChar then
                 task.wait(3)
                 newChar = char()
             end
-            task.wait(2) -- let land render
+            task.wait(2.5) -- let land fully render before TPing
             local c = newChar or char()
             if c and c:FindFirstChild('HumanoidRootPart') then
                 c:PivotTo(plotCF + Vector3.new(0, 6, 0))
                 notify('✅ Done! Check your axes — should be doubled.')
             else
-                notify('⚠️ Could not TP back. Walk to your base manually.')
+                notify('⚠️ Respawned but could not TP. Walk to your base.')
             end
             dupeRunning = false
         end)
 
-        -- Return base CFrame to the server to finalize land placement
         return plotCF, 0
     end
 
-    -- ── STEP 4: Fire RequestLoad (timeout 45s) ─────────────────
-    -- This call BLOCKS until the entire server load sequence completes.
-    -- The server fires SelectLoadPlot mid-way — our hook above handles it.
-    -- 45s timeout because land loading can genuinely take a while.
-    notify('[4/4] Firing load request — hold on...')
-    local _, t4, e4, em4 = invokeWithTimeout(RequestLoad, 45, loadSlot)
-
-    -- If RequestLoad timed out / errored AND hook never fired, something went wrong
-    if (t4 or e4) and not hookFired then
-        SelectLoadPlot.OnClientInvoke = origHook
-        dupeRunning = false
-        if t4 then
-            return notify('❌ Step 4 timed out — server never responded to load request. Slot correct?')
-        else
-            return notify('❌ Step 4 error: ' .. em4)
-        end
-    end
-    -- If hook fired, the task.spawn inside it is already handling the TP + cleanup
+    -- ── STEP 4: Fire RequestLoad — fire-and-forget ────────────────
+    -- We do NOT wait for this to return. The server will reset our character
+    -- as part of the flow, which kills the InvokeServer thread — that is fine
+    -- and expected. The hook above will catch SelectLoadPlot when the server
+    -- fires it after the reset.
+    task.spawn(function()
+        pcall(function()
+            RequestLoad:InvokeServer(loadSlot)
+        end)
+        -- If we get here without hookFired, RequestLoad returned early (slot empty?)
+        -- The watchdog above will catch this after its 60s window.
+    end)
 end
 
 -- ═══════════════════════════════════════════════════════
