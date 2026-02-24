@@ -85,7 +85,11 @@ end
 local dupeRunning = false
 
 local function dupeAxe()
-    if dupeRunning then return notify('Already running!') end
+    if dupeRunning then
+        -- Second press = force reset if stuck
+        dupeRunning = false
+        return notify('Dupe reset! Press again to start fresh.')
+    end
 
     local slot = Player.CurrentSaveSlot.Value
     if not slot or slot<=0 then return notify('Load a slot from in-game menu first!') end
@@ -112,67 +116,67 @@ local function dupeAxe()
 
     dupeRunning = true
 
-    -- 1) Save slot so axe is in save file
+    -- 1) Save slot NOW so save file records the axe
     notify('[1/4] Saving slot '..slot..'...')
     pcall(function() RequestSave:InvokeServer(slot, Player) end)
     task.wait(1.5)
 
-    -- 2) Unequip + drop axe
+    -- 2) Unequip + drop axe into world
     notify('[2/4] Dropping axe...')
     h:UnequipTools(); task.wait(0.3)
     ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame)
     task.wait(0.5)
 
-    -- 3) Wait for reload cooldown to clear
-    notify('[3/4] Waiting cooldown...')
-    local waited=0; local ready=false
-    repeat
-        task.wait(1); waited+=1
-        ready = pcall(function() assert(ClientMayLoad:InvokeServer(Player)==true) end)
-        if waited%10==0 then notify('[3/4] Cooldown: '..waited..'s...') end
-    until ready or waited>=90
-
-    if not ready then
-        dupeRunning=false
-        return notify('Cooldown timed out.')
+    -- 3) Fixed 65s wait — the server enforces ~60s between loads
+    --    ClientMayLoad polling is unreliable client-side, just wait.
+    notify('[3/4] Waiting 65s cooldown...')
+    for i = 65, 1, -1 do
+        task.wait(1)
+        if i == 60 or i == 45 or i == 30 or i == 15 or i <= 5 then
+            notify('[3/4] '..i..'s remaining...')
+        end
     end
 
-    -- 4) Hook SelectLoadPlot to auto-place land at same spot
+    -- 4) Hook SelectLoadPlot properly:
+    --    Must call enterPurchaseMode + selectionMade exactly like real handler
     notify('[4/4] Reloading slot '..slot..'...')
+    local PClient = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
     local origHook = SelectLoadPlot.OnClientInvoke
 
-    -- Get the correct return format from the real handler
-    local PClient = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
-    local correctReturn = plotCF
-    pcall(function()
-        correctReturn = getupvalue(PClient.enterPurchaseMode, 10) or plotCF
-    end)
-
-    SelectLoadPlot.OnClientInvoke = function(_model)
-        return correctReturn, 0
+    SelectLoadPlot.OnClientInvoke = function(model)
+        -- Enter land placement mode (non-blocking)
+        pcall(function() PClient.enterPurchaseMode(0, false, model) end)
+        task.wait(0.15)
+        -- Immediately confirm placement at saved position
+        pcall(function() PClient:selectionMade() end)
+        task.wait(0.15)
+        -- Return the CFrame stored internally by enterPurchaseMode (upvalue 10)
+        local cf = plotCF
+        pcall(function() cf = getupvalue(PClient.enterPurchaseMode, 10) or plotCF end)
+        return cf, 0
     end
 
-    -- 5) Invoke RequestLoad in thread
-    local done=false
+    -- Invoke RequestLoad — server will call our SelectLoadPlot hook
+    local done = false
     task.spawn(function()
         pcall(function() RequestLoad:InvokeServer(slot, Player) end)
-        done=true
+        done = true
     end)
 
-    -- Backup: spam selectionMade
-    local t=0
+    -- Keep spamming selectionMade as belt-and-suspenders
+    local t = 0
     repeat
-        task.wait(0.2); t+=0.2
+        task.wait(0.2); t += 0.2
         pcall(function() PClient:selectionMade() end)
-    until done or t>=30
+    until done or t >= 20
 
-    pcall(function() SelectLoadPlot.OnClientInvoke=origHook end)
-    dupeRunning=false
+    pcall(function() SelectLoadPlot.OnClientInvoke = origHook end)
+    dupeRunning = false
 
     if done then
         notify('Done! Walk back and pick up the dropped axe = 2 axes!')
     else
-        notify('Reload timed out.')
+        notify('Reload timed out — try manually reloading your slot.')
     end
 end
 
