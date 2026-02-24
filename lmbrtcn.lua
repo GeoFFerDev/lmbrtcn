@@ -76,47 +76,46 @@ local function safeSuicide()
 end
 
 -- ───────────────────────────────────────────────────────
--- ─── REMOTES & ENV needed for dupe ────────────────────
-local SelectLoadPlot   = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
-local PurchasingClient = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
+-- ─── REMOTES for dupe ─────────────────────────────────
+local RequestLoad    = ReplicatedStorage.LoadSaveRequests.RequestLoad
+local RequestSave    = ReplicatedStorage.LoadSaveRequests.RequestSave
+local ClientMayLoad  = ReplicatedStorage.LoadSaveRequests.ClientMayLoad
+local SelectLoadPlot = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
 
 -- ───────────────────────────────────────────────────────
---  DUPE AXE — CORRECT FLOW
+--  DUPE AXE — CORRECT LOGIC (confirmed from game files)
 --
---  HOW LT2 DUPE ACTUALLY WORKS:
---  1. Have a save slot loaded (axe is recorded in that save)
---  2. Equip the axe in your hand
---  3. Die → LT2 automatically drops equipped tools on death
---  4. Axe sits on your land
---  5. Game shows "choose land" UI (the 60s cooldown respawn)
---  6. That land selection = your slot reloading = axe restored
---  7. Pick up the world axe = 2 axes
+--  The DROP already works (proven by zip: axes sitting in
+--  workspace.PlayerModels from previous attempts).
 --
---  Script handles: equip → die → auto-confirm land selection
---  at the SAME position using SelectLoadPlot.OnClientInvoke hook
+--  Full sequence (NO dying needed):
+--  1. Record your property plot CFrame
+--  2. Drop axe via ClientInteracted remote
+--     → Axe appears in workspace.PlayerModels
+--     → Save still has the axe (drop doesn't update save)
+--  3. Wait for 60s reload cooldown (ClientMayLoad)
+--  4. Hook SelectLoadPlot.OnClientInvoke to auto-place land
+--  5. Call RequestLoad:InvokeServer(slot, Player) in thread
+--     → Server calls SelectLoadPlot on client
+--     → Our hook returns saved plot CFrame immediately
+--     → Server restores axe from save to inventory
+--  6. Walk back, pick up world axe = 2 axes
 -- ───────────────────────────────────────────────────────
 local dupeRunning = false
 
 local function dupeAxe()
     if dupeRunning then return notify('Dupe already running!') end
 
-    -- FIX 1: Robust slot check with fallback paths
-    local slot = nil
-    pcall(function() slot = Player.CurrentSaveSlot.Value end)
+    -- Verify slot is loaded
+    local slot = Player.CurrentSaveSlot.Value
     if not slot or slot <= 0 then
-        pcall(function()
-            local s = Player.PlayerGui:FindFirstChild('CurrentSaveSlot')
-            if s then slot = s.Value end
-        end)
-    end
-    if not slot or slot <= 0 then
-        return notify('Load a save slot first! (in-game menu)')
+        return notify('No slot loaded! Use the in-game menu to load a slot first.')
     end
 
-    local c = char(); local h = hum()
-    if not c or not h then return notify('No character!') end
+    local c = char(); local h = hum(); local r = root()
+    if not c or not h or not r then return notify('No character found!') end
 
-    -- Find axe (backpack or already equipped)
+    -- Find axe
     local axe = nil
     for _, v in ipairs(Player.Backpack:GetChildren()) do
         if v:FindFirstChild('CuttingTool') then axe = v; break end
@@ -126,74 +125,96 @@ local function dupeAxe()
             if v:IsA('Tool') and v:FindFirstChild('CuttingTool') then axe = v; break end
         end
     end
-    if not axe then return notify('No axe in inventory! Buy one first.') end
+    if not axe then return notify('No axe found! Buy one first.') end
 
-    -- FIX 2: Save the whole plot MODEL (not just its CFrame) — the server
-    --         expects the actual Instance reference to identify which land to load
-    local savedPlot = nil
+    -- Save property plot CFrame BEFORE anything else
+    local plotCF = nil
     for _, prop in ipairs(workspace.Properties:GetChildren()) do
-        if prop:FindFirstChild('Owner') and prop.Owner.Value == Player then
-            savedPlot = prop
+        if prop:FindFirstChild('Owner') and prop.Owner.Value == Player
+        and prop:FindFirstChild('OriginSquare') then
+            plotCF = prop.OriginSquare.CFrame
             break
         end
+    end
+    if not plotCF then
+        return notify('Could not find your land plot! Make sure land is loaded.')
     end
 
     dupeRunning = true
 
-    -- FIX 3: Hook returns the plot model directly, no extra return values
-    local prevInvoke = SelectLoadPlot.OnClientInvoke
-    SelectLoadPlot.OnClientInvoke = function()
-        return savedPlot
-    end
+    -- STEP 1: Unequip then drop
+    notify('[1/4] Dropping axe...')
+    h:UnequipTools()
+    task.wait(0.25)
+    ClientInteracted:FireServer(axe, 'Drop tool', r.CFrame)
+    task.wait(0.5)
 
-    notify('Equipping axe...')
-    h:EquipTool(axe)
+    -- STEP 2: Wait for reload cooldown
+    notify('[2/4] Waiting for reload cooldown (up to 60s)...')
+    local waited = 0
+    local canLoad = false
+    repeat
+        task.wait(1)
+        waited += 1
+        canLoad = pcall(function()
+            local res = ClientMayLoad:InvokeServer(Player)
+            assert(res == true)
+        end)
+        if waited % 15 == 0 then
+            notify('[2/4] Still waiting... ('..waited..'s)')
+        end
+    until canLoad or waited >= 90
 
-    -- Wait until axe is actually in character's hand
-    local w = 0
-    repeat task.wait(0.05); w += 0.05
-    until c:FindFirstChildOfClass('Tool') ~= nil or w >= 3
-
-    if not c:FindFirstChildOfClass('Tool') then
-        SelectLoadPlot.OnClientInvoke = prevInvoke
+    if not canLoad then
         dupeRunning = false
-        return notify('Equip failed — try again.')
+        return notify('Cooldown never cleared. Try reloading manually.')
     end
 
-    -- Wait for server to register the equipped tool
-    task.wait(0.4)
-
-    notify('Dying... axe will drop on your land.')
-
-    -- Kill character — LT2 drops the equipped axe automatically
-    local headPart = c:FindFirstChild('Head')
-    if headPart then
-        headPart:Destroy()
+    -- STEP 3: Hook SelectLoadPlot to auto-confirm land at same spot
+    notify('[3/4] Reloading slot '..slot..'...')
+    local origHook = SelectLoadPlot.OnClientInvoke
+    SelectLoadPlot.OnClientInvoke = function(_model)
+        -- Return saved plot CFrame so server places land at same position
+        return plotCF, 0
     end
 
-    -- Wait for respawn
-    task.wait(2.5)
+    -- STEP 4: Call RequestLoad in separate thread (it blocks waiting for SelectLoadPlot response)
+    local loadDone = false
+    task.spawn(function()
+        pcall(function()
+            RequestLoad:InvokeServer(slot, Player)
+        end)
+        loadDone = true
+    end)
 
-    -- FIX 4: dot syntax (.) not colon (:) — PurchasingClient is a plain
-    --         env table from getsenv(), not an object. Colon would pass
-    --         the table as `self` and silently error inside every pcall.
-    notify('Confirming land placement...')
+    -- Also spam selectionMade as belt-and-suspenders backup
+    -- (in case PropertyPurchasingClient:enterPurchaseMode was already running)
+    local pClient = nil
+    pcall(function()
+        pClient = getsenv(Player.PlayerGui.PropertyPurchasingGUI.PropertyPurchasingClient)
+    end)
+
     local timeout = 0
     repeat
-        task.wait(0.15)
-        timeout += 0.15
-        pcall(function()
-            PurchasingClient.selectionMade()
-        end)
-    until timeout >= 20
+        task.wait(0.2)
+        timeout += 0.2
+        if pClient then
+            pcall(function() pClient:selectionMade() end)
+        end
+    until loadDone or timeout >= 25
 
-    -- Restore original handler
+    -- Restore original hook
     pcall(function()
-        SelectLoadPlot.OnClientInvoke = prevInvoke
+        SelectLoadPlot.OnClientInvoke = origHook
     end)
 
     dupeRunning = false
-    notify('Done! Axe restored from save. Walk back and pick up the dropped one = 2 axes!')
+
+    if loadDone then
+        notify('[4/4] Done! Axe restored from save. Walk back and pick up the dropped axe = 2 axes!')
+    else
+        notify('Reload timed out. Check if your slot is still loaded.')
+    end
 end
 
 -- ───────────────────────────────────────────────────────
@@ -746,14 +767,7 @@ rnd(slotLabel); pad(slotLabel, 0,0,12,12)
 task.spawn(function()
     while task.wait(1) do
         pcall(function()
-            local slot = nil
-            pcall(function() slot = Player.CurrentSaveSlot.Value end)
-            if not slot or slot <= 0 then
-                pcall(function()
-                    local s = Player.PlayerGui:FindFirstChild('CurrentSaveSlot')
-                    if s then slot = s.Value end
-                end)
-            end
+            local slot = Player.CurrentSaveSlot.Value
             slotLabel.Text = (slot and slot > 0)
                 and ('✅  Loaded Slot:  '..tostring(slot)..'   —   Ready')
                 or  '❌  No slot loaded — load one from in-game menu!'
