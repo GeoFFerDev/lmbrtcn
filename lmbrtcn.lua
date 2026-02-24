@@ -216,15 +216,18 @@ local function dupeAxe()
         end
     end)
 
-    -- Fire RequestLoad — fire-and-forget, it gets killed when character dies
+    -- Fire RequestLoad — fire-and-forget, killed when character respawns
     task.spawn(function()
         pcall(function() RequestLoad:InvokeServer(loadSlot) end)
     end)
 
-    -- INSTANTLY void TP and kill — no delays after this point.
-    -- RequestLoad is now active on the server, suppressing axe drop on death.
-    c.HumanoidRootPart.CFrame = CFrame.new(0, -5000, 0)
-    pcall(function() c:BreakJoints() end)
+    -- Void TP only — NO BreakJoints.
+    -- BreakJoints from a LocalScript does NOT reliably replicate to the server
+    -- (FilteringEnabled blocks it). The server never sees the death = hook never fires.
+    -- LT2 has a server-side kill zone below the map. Sending the character there
+    -- causes a REAL server-side death, which the server sees during RequestLoad.
+    -- That's what suppresses the axe drop and triggers SelectLoadPlot.
+    c.HumanoidRootPart.CFrame = CFrame.new(0, -500, 0)
 end
 
 -- ═══════════════════════════════════════════════════════
