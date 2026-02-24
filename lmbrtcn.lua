@@ -221,13 +221,16 @@ local function dupeAxe()
         pcall(function() RequestLoad:InvokeServer(loadSlot) end)
     end)
 
-    -- Void TP only — NO BreakJoints.
-    -- BreakJoints from a LocalScript does NOT reliably replicate to the server
-    -- (FilteringEnabled blocks it). The server never sees the death = hook never fires.
-    -- LT2 has a server-side kill zone below the map. Sending the character there
-    -- causes a REAL server-side death, which the server sees during RequestLoad.
-    -- That's what suppresses the axe drop and triggers SelectLoadPlot.
-    c.HumanoidRootPart.CFrame = CFrame.new(0, -500, 0)
+    -- Re-capture character fresh — yields happened above, old ref may be stale
+    -- Use PivotTo which reliably replicates vs direct CFrame assignment
+    -- LT2 has a server-side kill plane below the map — this causes a real
+    -- server-seen death while RequestLoad is active, which drops the axe
+    -- to the ground. RequestLoad then saves inventory, restores axe on respawn.
+    -- Dropped axe on ground + restored axe from save = doubled.
+    local lc = char()
+    if lc then
+        lc:PivotTo(CFrame.new(0, -500, 0))
+    end
 end
 
 -- ═══════════════════════════════════════════════════════
