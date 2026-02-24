@@ -107,7 +107,7 @@ local function dupeAxe()
 
     local loadSlot = dupeSlots.load
 
-    -- Need land CFrame before character gets kicked out of map
+    -- Snapshot land CFrame before character gets kicked off the map
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
         return notify('Load your land first!')
@@ -116,54 +116,40 @@ local function dupeAxe()
 
     dupeRunning = true
 
-    -- ── 1) Check cooldown — abort immediately if not ready ───────
+    -- ── 1) Check cooldown — single call, abort immediately if not ready ──
+    -- Linear call: yields until server responds, no pcall so errors surface
     notify('Checking cooldown...')
-    local ok, canLoad = pcall(function()
-        return ClientMayLoad:InvokeServer(Player)
-    end)
-    if not ok or canLoad ~= true then
+    local canLoad = ClientMayLoad:InvokeServer(Player)
+    if canLoad ~= true then
         dupeRunning = false
-        return notify('❌ Cooldown not ready! Wait ~60s after your last load, then try again.')
+        return notify('❌ Cooldown not ready. Wait ~60s after your last load.')
     end
 
-    -- ── 2) GetMetaData — server expects this before RequestLoad ──
-    pcall(function() GetMetaData:InvokeServer(Player) end)
-    task.wait(0.2)
+    -- ── 2) GetMetaData — server expects this call before RequestLoad ──
+    GetMetaData:InvokeServer(Player)
 
-    -- ── 3) Hook SelectLoadPlot then fire RequestLoad ──────────────
-    --    Server will: auto-save inventory → kick char out of map →
-    --    fire SelectLoadPlot → restore save (axes doubled) → done.
-    notify('Duping... your character will be sent out of the map, then choose your land spot.')
+    -- ── 3) Hook SelectLoadPlot, then call RequestLoad linearly ────────
+    -- RequestLoad:InvokeServer yields here until the full server sequence
+    -- completes (~22s): auto-save → kick char → SelectLoadPlot → restore save
+    -- No task.spawn, no pcall — the yield IS the exploit executing naturally
+    notify('Running...')
 
     local origHook = SelectLoadPlot.OnClientInvoke
     SelectLoadPlot.OnClientInvoke = function(_model)
-        -- Exact [EXEC] sequence from Cobalt: confirm land placement on server
-        pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
-        -- Return saved land CFrame — server places land here and finishes
+        -- Fire SetPropertyPurchasingValue(true) then return land CFrame
+        -- This is exactly what the Cobalt [EXEC] trace shows inside the hook
+        SetPropertyPurchValue:InvokeServer(true)
         return plotCF, 0
     end
 
-    local loadDone = false
-    task.spawn(function()
-        pcall(function() RequestLoad:InvokeServer(loadSlot, Player) end)
-        loadDone = true
-    end)
+    -- This line YIELDS for ~22s while the server does all the work.
+    -- Your character will be kicked out of the map during this wait — that's correct.
+    RequestLoad:InvokeServer(loadSlot, Player)
 
-    -- Wait up to 35s (Cobalt shows working script completes in ~27s)
-    local waited = 0
-    while not loadDone and waited < 35 do
-        task.wait(1)
-        waited += 1
-    end
-
-    pcall(function() SelectLoadPlot.OnClientInvoke = origHook end)
+    -- Restore original hook after RequestLoad finishes
+    SelectLoadPlot.OnClientInvoke = origHook
     dupeRunning = false
-
-    if loadDone then
-        notify('✅ Dupe complete! Axes doubled.')
-    else
-        notify('⚠ Timed out — try reloading your slot manually.')
-    end
+    notify('✅ Dupe complete! Axes doubled.')
 end
 
 -- ═══════════════════════════════════════════════════════
