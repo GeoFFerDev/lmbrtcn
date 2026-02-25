@@ -1,22 +1,36 @@
 -- ═══════════════════════════════════════════════════════
---  Delta Hub  |  LT2  |  Mobile-First  |  FIXED v7
+--  Delta Hub  |  LT2  |  Mobile-First  |  v8 REBUILT
+--
+--  DUPE REWRITE REASON (why v7 was stuck at "Duping..."):
+--
+--  The game's RequestLoad:InvokeServer requires 3 arguments:
+--    RequestLoad:InvokeServer(slotNumber, LocalPlayer, versionMeta)
+--  v7 only sent 1 arg (slotNumber). The server silently rejected
+--  it, so the server NEVER called SelectLoadPlot back to the client.
+--  The hook was set, waiting forever — hence the freeze.
+--
+--  Additionally, the game has a CurrentSaveSlot security system:
+--  a random password ("zebras"/math.random) prevents direct slot
+--  manipulation. Any attempt to bypass it kicks the player.
+--
+--  FIX: Use the game's own LoadSaveGUI buttons via firesignal().
+--  This lets the game's own code handle all security and args,
+--  while we intercept SelectLoadPlot.OnClientInvoke to auto-confirm.
 -- ═══════════════════════════════════════════════════════
 if getgenv().DeltaHub_Loaded then return print('[Delta] Already loaded.') end
 getgenv().DeltaHub_Loaded = true
 
--- FIX 1: Robust loading wait — won't freeze forever if OnboardingGUI is missing
 repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
 local Player = game.Players.LocalPlayer
 repeat task.wait() until Player:FindFirstChild('PlayerGui')
 
--- Wait for OnboardingGUI with a timeout so the script doesn't hang on alt accounts
 local t0 = tick()
 repeat task.wait()
 until (Player.PlayerGui:FindFirstChild('OnboardingGUI')
     and Player.PlayerGui.OnboardingGUI:FindFirstChild('DoOnboarding')
     and Player.PlayerGui.OnboardingGUI.DoOnboarding:FindFirstChild('Loaded')
     and Player.PlayerGui.OnboardingGUI.DoOnboarding.Loaded.Value == true)
-    or (tick() - t0 > 20) -- 20s timeout so it never freezes forever
+    or (tick() - t0 > 20)
 
 local Players           = game:GetService('Players')
 local RunService        = game:GetService('RunService')
@@ -30,10 +44,6 @@ local ClientIsDragging        = ReplicatedStorage.Interaction.ClientIsDragging
 local RemoteProxy             = ReplicatedStorage.Interaction.RemoteProxy
 local SendUserNotice          = ReplicatedStorage.Notices.SendUserNotice
 local AxeFolder               = ReplicatedStorage.AxeClasses
-local RequestLoad             = ReplicatedStorage.LoadSaveRequests.RequestLoad
-local RequestSave             = ReplicatedStorage.LoadSaveRequests.RequestSave
-local ClientMayLoad           = ReplicatedStorage.LoadSaveRequests.ClientMayLoad
-local GetMetaData             = ReplicatedStorage.LoadSaveRequests.GetMetaData
 local SelectLoadPlot          = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
 local SetPropertyPurchValue   = ReplicatedStorage.PropertyPurchasing.SetPropertyPurchasingValue
 local ClientPurchasedProperty = ReplicatedStorage.PropertyPurchasing.ClientPurchasedProperty
@@ -60,7 +70,7 @@ local function getAxes()
 end
 
 local function safeSuicide()
-    pcall(function() char().Head:Destroy() end)
+    pcall(function() char().Humanoid.Health = 0 end)
 end
 
 local function getMyProp()
@@ -81,51 +91,27 @@ local function getFreeProp()
 end
 
 -- ═══════════════════════════════════════════════════════
---  DUPE AXE  —  FIXED
+--  DUPE AXE  —  v8 COMPLETE REWRITE
 --
---  HOW IT WORKS:
---    RequestLoad makes the server auto-save your current inventory
---    (axes included), resets your character, then reloads the save.
---    Because axes were saved BEFORE the reset, they come back doubled.
+--  STRATEGY: Use the game's own LoadSaveGUI buttons via
+--  firesignal() so that RequestLoad is called with the
+--  correct args and security tokens automatically.
+--  We only intercept SelectLoadPlot.OnClientInvoke to
+--  auto-select the player's current property.
 --
---  KEY FIX: We must NOT kill the character before firing RequestLoad.
---    Killing first clears the backpack before the server saves it,
---    so the save is empty and nothing gets doubled.
---    The server handles the character reset itself as part of the flow.
+--  STEP-BY-STEP:
+--    1. Validate: land loaded, axes in backpack
+--    2. Install SelectLoadPlot hook (intercepts plot selection)
+--    3. Open the LoadSaveGUI via its Open BindableEvent
+--    4. Wait for slot list, find + click the correct slot button
+--    5. Wait for SlotInfo panel, click the Load button
+--    6. Game's own code calls RequestLoad with correct args
+--    7. Server saves+resets character, calls SelectLoadPlot
+--    8. Our hook returns the player's property → load completes
+--    9. TP back to base, axes are doubled
 -- ═══════════════════════════════════════════════════════
 local dupeRunning = false
-local dupeSlots   = { save = 1, load = 1 }
-
--- Helper: InvokeServer with a timeout so we never hang forever.
--- Returns: result (any), timedOut (bool), errored (bool), errMsg (string)
-local function invokeWithTimeout(remote, timeout, ...)
-    local args = {...}
-    local result, timedOut, errored, errMsg = nil, false, false, ''
-    local done = false
-
-    task.spawn(function()
-        local ok, val = pcall(function()
-            return remote:InvokeServer(table.unpack(args))
-        end)
-        if not done then
-            done = true
-            if ok then result = val else errored = true; errMsg = tostring(val) end
-        end
-    end)
-
-    -- FIX: Use os.clock() instead of float accumulation (t += 0.1 drifts over many steps)
-    local startTime = os.clock()
-    while not done and (os.clock() - startTime) < timeout do
-        task.wait(0.1)
-    end
-
-    if not done then
-        done = true
-        timedOut = true
-    end
-
-    return result, timedOut, errored, errMsg
-end
+local dupeSlot    = 1  -- slot to load (set by slider in UI)
 
 local function dupeAxe()
     if dupeRunning then
@@ -133,6 +119,7 @@ local function dupeAxe()
         return notify('Dupe cancelled.')
     end
 
+    -- ── STEP 1: VALIDATE ─────────────────────────────
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
         return notify('❌ Load your land first!')
@@ -141,61 +128,39 @@ local function dupeAxe()
         return notify('❌ No axes in inventory!')
     end
 
-    local plotCF   = prop.OriginSquare.CFrame
-    local loadSlot = dupeSlots.load
+    -- Find the LoadSaveGUI — must exist for this to work
+    local lsGUI = Player.PlayerGui:FindFirstChild('LoadSaveGUI')
+    if not lsGUI then
+        return notify('❌ LoadSaveGUI not found. Try rejoining.')
+    end
 
-    -- Cooldown check
-    local canLoad, t1, e1 = invokeWithTimeout(ClientMayLoad, 10)
-    if t1 then return notify('❌ Server not responding. Try rejoining.') end
-    if e1 then return notify('❌ Cooldown check failed.') end
-    if not canLoad then return notify('❌ Cooldown active — wait ~60s.') end
+    local plotCF = prop.OriginSquare.CFrame
+    dupeRunning  = true
+    notify('⏳ Starting dupe...')
 
-    invokeWithTimeout(GetMetaData, 10)
-
-    dupeRunning = true
-    notify('Duping...')
-
-    -- ── THE HOOK ─────────────────────────────────────────────────
-    -- The game has its own LocalScript that sets SelectLoadPlot.OnClientInvoke
-    -- to show the land-selection GUI. When RequestLoad fires, the game's script
-    -- can overwrite our hook. Fix: reassert our hook every 30ms in a tight loop
-    -- from the moment RequestLoad fires until the hook actually catches.
-    -- ─────────────────────────────────────────────────────────────
-
+    -- ── STEP 2: HOOK SelectLoadPlot ──────────────────
+    -- The server calls this after the character resets to ask
+    -- "where do you want to load your save?". We return our
+    -- property so the server loads on our land automatically.
     local hookFired = false
     local origHook  = SelectLoadPlot.OnClientInvoke
 
     local function ourHook(_model)
-        -- BUG FIX 1: Must return the property *Instance*, NOT a CFrame.
-        -- The server's SelectLoadPlot:InvokeClient() expects the client to return
-        -- the chosen property model object (same type as workspace.Properties children),
-        -- plus a rotation integer (0-3).  Returning plotCF (a CFrame) caused the
-        -- server to receive a wrong type and silently fail the entire load.
-        if hookFired then return prop, 0 end  -- guard against double-fire
+        if hookFired then return prop, 0 end
         hookFired = true
-        notify('Plot selected — confirming...')
+        notify('🔄 Plot confirmed — loading...')
 
-        -- SetPropertyPurchValue in task.spawn — direct call here = deadlock
-        -- (server is blocked waiting for THIS hook to return).
-        -- We still need to signal true immediately; the loop above will keep it alive.
+        -- Counter exitAll race: PropertyPurchasingClient's Humanoid.Died
+        -- fires exitAll() which sends SetPropertyPurchasingValue(false).
+        -- We keep asserting true until the load fully completes.
         task.spawn(function()
-            pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
-        end)
-
-        -- BUG FIX 2: Counter the game's own exitAll race.
-        -- PropertyPurchasingClient has: v_u_4.Died:connect(exitAll)
-        -- exitAll calls: SetPropertyPurchasingValue:InvokeServer(false)
-        -- When the char dies (from RequestLoad server-reset), exitAll fires and
-        -- tells the server "player cancelled" — BEFORE our load completes.
-        -- Fix: re-assert the "true" signal after exitAll fires, via a tight loop.
-        task.spawn(function()
-            for _ = 1, 8 do
-                task.wait(0.4)
+            for _ = 1, 10 do
+                task.wait(0.3)
                 pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
             end
         end)
 
-        -- Wait for server-triggered respawn then TP to base
+        -- Wait for server to respawn character, then TP to property
         task.spawn(function()
             local newChar = Player.CharacterAdded:Wait(25) or char()
             task.wait(2.5)
@@ -204,55 +169,142 @@ local function dupeAxe()
                 nc:PivotTo(plotCF + Vector3.new(0, 6, 0))
                 notify('✅ Done! Check your axes.')
             else
-                notify('⚠️ Walk to your base manually.')
+                notify('⚠️ Done. Walk to your base manually.')
             end
             dupeRunning = false
         end)
 
-        -- BUG FIX 1 (return): Return the property Instance, not a CFrame.
-        -- The server does: local plot, rotation = SelectLoadPlot:InvokeClient(player, models)
-        -- It then uses `plot` as a workspace property object, not a CFrame.
         return prop, 0
     end
 
-    -- Persistent hook loop — reasserts ourHook every 30ms so the game's
-    -- own client script cannot permanently overwrite us
+    -- Keep reasserting the hook every 30ms so game's own
+    -- PropertyPurchasingClient cannot overwrite it
+    local hookLoopActive = true
     task.spawn(function()
-        local start = os.clock()
-        while not hookFired and (os.clock() - start) < 45 do
+        local tStart = os.clock()
+        while hookLoopActive and not hookFired and (os.clock()-tStart) < 60 do
             SelectLoadPlot.OnClientInvoke = ourHook
             task.wait(0.03)
         end
         if not hookFired then
             SelectLoadPlot.OnClientInvoke = origHook
             dupeRunning = false
-            notify('❌ Timed out — check slot number matches your loaded save.')
+            if hookLoopActive then
+                notify('❌ Timed out. Make sure slot ' .. dupeSlot .. ' has a save.')
+            end
         end
+        hookLoopActive = false
     end)
 
-    -- Fire RequestLoad fire-and-forget — will be killed when char resets, that is normal
-    task.spawn(function()
-        pcall(function() RequestLoad:InvokeServer(loadSlot) end)
-    end)
+    -- ── STEP 3: OPEN LoadSaveGUI ─────────────────────
+    -- The GUI has a BindableEvent "Open" that opens the slot list.
+    -- This is exactly what the MenuGUI's SaveLoad button does.
+    local openEvent = lsGUI:FindFirstChild('Open')
+    if openEvent then
+        pcall(function() openEvent:Fire() end)
+    else
+        -- Fallback: set IsOpen directly (triggers the GUI's Changed handler)
+        local isOpen = lsGUI:FindFirstChild('IsOpen')
+        if isOpen then isOpen.Value = true end
+    end
 
-    -- Kill character so the server proceeds to SelectLoadPlot step.
-    -- Must be OFF the land (so server knows to ask for new plot placement).
-    -- Humanoid.Health = 0 is the only reliable server-replicated kill from
-    -- a LocalScript — BreakJoints and Head:Destroy do NOT replicate through FE.
-    -- Client has network ownership of its own Humanoid so Health writes replicate.
-    -- Kill character so the server proceeds to SelectLoadPlot step.
-    -- NOTE: h2.Health = 0 does NOT reliably replicate through FE from a LocalScript.
-    -- The hrp teleport to Y=-2000 is what actually triggers the server kill plane.
-    -- BUG FIX 3: We must kill ONLY after setting up the hook loop, so the hook
-    -- is in place before the server-side reset + SelectLoadPlot call happens.
-    -- (Already the case here — hook loop is running above before we kill.)
-    local c2  = char()
-    local hrp = c2 and c2:FindFirstChild('HumanoidRootPart')
-    local h2  = c2 and c2:FindFirstChild('Humanoid')
-    -- Teleport below map kill plane. LT2 kill plane is around Y = -100.
-    if hrp then hrp.CFrame = CFrame.new(0, -2000, 0) end
-    -- h2.Health = 0 is a backup; may not replicate through FE but harmless to include.
-    if h2  then h2.Health = 0 end
+    task.wait(0.8)  -- let the GUI populate slot list
+
+    -- ── STEP 4: CLICK the correct slot button ────────
+    -- The slot list lives in LoadSaveGUI.SlotList.Main.
+    -- Each slot is a cloned TextButton with a SlotName child
+    -- whose text is "Slot 1", "Slot 2", etc.
+    local slotClicked = false
+    local slotList = lsGUI:FindFirstChild('SlotList')
+
+    if slotList then
+        local main = slotList:FindFirstChild('Main')
+        if main then
+            for _, item in ipairs(main:GetChildren()) do
+                local slotName = item:FindFirstChild('SlotName')
+                if slotName and slotName.Text:find(tostring(dupeSlot)) then
+                    -- Use firesignal (exploit API) to trigger the click handler
+                    pcall(function() firesignal(item.MouseButton1Click) end)
+                    slotClicked = true
+                    break
+                end
+            end
+        end
+    end
+
+    if not slotClicked then
+        -- Fallback: try to find slot button by index (some servers order differently)
+        if slotList then
+            local main = slotList:FindFirstChild('Main')
+            if main then
+                local buttons = {}
+                for _, v in ipairs(main:GetChildren()) do
+                    if v:IsA('TextButton') or v:IsA('Frame') then
+                        table.insert(buttons, v)
+                    end
+                end
+                -- Sort by LayoutOrder or Position so we pick the right slot
+                table.sort(buttons, function(a, b)
+                    return a.Position.Y.Offset < b.Position.Y.Offset
+                end)
+                local target = buttons[dupeSlot]
+                if target then
+                    pcall(function() firesignal(target.MouseButton1Click) end)
+                    slotClicked = true
+                end
+            end
+        end
+    end
+
+    if not slotClicked then
+        hookLoopActive = false
+        SelectLoadPlot.OnClientInvoke = origHook
+        dupeRunning = false
+        return notify('❌ Could not find slot ' .. dupeSlot .. ' in GUI. Is the GUI open?')
+    end
+
+    task.wait(0.6)  -- wait for SlotInfo panel to show
+
+    -- ── STEP 5: CLICK the Load button ────────────────
+    -- After selecting a slot, LoadSaveGUI.SlotInfo.Main.Load appears.
+    -- Clicking it runs loadSlot() which calls:
+    --   ClientMayLoad:InvokeServer(Player)            — cooldown check
+    --   RequestLoad:InvokeServer(slot, Player, nil)   — the actual load
+    -- This is the CORRECT call the server expects with all 3 args.
+    local loadClicked = false
+    local slotInfo = lsGUI:FindFirstChild('SlotInfo')
+
+    if slotInfo and slotInfo:FindFirstChild('Main') then
+        local loadBtn = slotInfo.Main:FindFirstChild('Load')
+        if loadBtn and loadBtn.Visible then
+            pcall(function() firesignal(loadBtn.MouseButton1Click) end)
+            loadClicked = true
+        end
+    end
+
+    if not loadClicked then
+        -- The Load button may not be visible yet if slot is new.
+        -- Wait a bit more and try again.
+        task.wait(1)
+        if slotInfo and slotInfo:FindFirstChild('Main') then
+            local loadBtn = slotInfo.Main:FindFirstChild('Load')
+            if loadBtn then
+                pcall(function() firesignal(loadBtn.MouseButton1Click) end)
+                loadClicked = true
+            end
+        end
+    end
+
+    if not loadClicked then
+        hookLoopActive = false
+        SelectLoadPlot.OnClientInvoke = origHook
+        dupeRunning = false
+        return notify('❌ Load button not found/visible. Does slot ' .. dupeSlot .. ' have a save?')
+    end
+
+    notify('✅ Load triggered! Waiting for server...')
+    -- From here, the game's own loadSlot() handles everything.
+    -- The hook will fire when the server calls SelectLoadPlot.
 end
 
 -- ═══════════════════════════════════════════════════════
@@ -426,165 +478,77 @@ local function N(cls,p)
     if p.Parent then o.Parent=p.Parent end
     return o
 end
-local function rnd(o,r) local x=Instance.new('UICorner');x.CornerRadius=r or UDim.new(0,8);x.Parent=o end
-local function strk(o,col,th) local s=Instance.new('UIStroke');s.Color=col;s.Thickness=th or 1;s.Parent=o end
-local function vl(o,gap) local l=Instance.new('UIListLayout');l.Padding=UDim.new(0,gap or 6);l.SortOrder=Enum.SortOrder.LayoutOrder;l.Parent=o;return l end
-local function pd(o,t,b,l,r) local p=Instance.new('UIPadding');p.PaddingTop=UDim.new(0,t or 8);p.PaddingBottom=UDim.new(0,b or 8);p.PaddingLeft=UDim.new(0,l or 10);p.PaddingRight=UDim.new(0,r or 10);p.Parent=o end
-local function tw(o,pr,t) TweenService:Create(o,TweenInfo.new(t or 0.14,Enum.EasingStyle.Quad),pr):Play() end
 
--- ═══════════════════════════════════════════════════════
---  SCREEN GUI + WINDOW
--- ═══════════════════════════════════════════════════════
-
--- FIX 2: CoreGui parenting — pcall returns true/false, not the service.
--- Original code: pcall(...) and CoreGui OR PlayerGui
--- This always resolves to CoreGui even when access is blocked (silent fail = no UI).
--- Fixed: properly capture the return value from pcall.
-local _cok, _cg = pcall(function() return game:GetService('CoreGui') end)
-local gp = (_cok and _cg) or Player.PlayerGui
-
-local SG = N('ScreenGui',{Name='DeltaHub',ResetOnSpawn=false,IgnoreGuiInset=true,
-    DisplayOrder=999,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,Parent=gp})
-
--- Minimised pill (shown when window is hidden)
-local Pill = N('TextButton',{Text='▲  Delta Hub',Size=UDim2.new(0,110,0,28),
-    Position=UDim2.new(0,12,0,12),BackgroundColor3=C.Panel,
-    Font=Enum.Font.GothamBold,TextSize=11,TextColor3=C.Acc,
-    BorderSizePixel=0,Visible=false,ZIndex=50,Parent=SG})
-rnd(Pill,UDim.new(0,18)); strk(Pill,C.AccD,1)
-
--- Main window
-local Main = N('Frame',{Name='Main',Size=UDim2.new(0,WW,0,WH),
-    Position=UDim2.new(0,12,0,12),
-    BackgroundColor3=C.BG,BorderSizePixel=0,ClipsDescendants=true,Parent=SG})
-rnd(Main,UDim.new(0,12)); strk(Main,Color3.fromRGB(32,46,70),1)
-
--- Title bar
-local TBar=N('Frame',{Size=UDim2.new(1,0,0,TH),BackgroundColor3=C.Panel,BorderSizePixel=0,ZIndex=6,Parent=Main})
-local dot=N('Frame',{Size=UDim2.new(0,6,0,6),Position=UDim2.new(0,10,0.5,-3),BackgroundColor3=C.Acc,BorderSizePixel=0,ZIndex=7,Parent=TBar})
-rnd(dot,UDim.new(1,0))
-N('TextLabel',{Text='Delta Hub',Size=UDim2.new(0,100,1,0),Position=UDim2.new(0,22,0,0),
-    BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=12,
-    TextColor3=C.TP,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=7,Parent=TBar})
-N('TextLabel',{Text='LT2',Size=UDim2.new(0,30,1,0),Position=UDim2.new(0,124,0,0),
-    BackgroundTransparency=1,Font=Enum.Font.Gotham,TextSize=10,
-    TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,ZIndex=7,Parent=TBar})
-N('Frame',{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=C.Sep,BorderSizePixel=0,ZIndex=6,Parent=TBar})
-
--- Close button
-local CloseBtn=N('TextButton',{Text='✕',Size=UDim2.new(0,22,0,22),Position=UDim2.new(1,-26,0.5,-11),
-    BackgroundColor3=C.Dng,BackgroundTransparency=0.3,Font=Enum.Font.GothamBold,
-    TextSize=11,TextColor3=C.TP,BorderSizePixel=0,ZIndex=8,Parent=TBar})
-rnd(CloseBtn,UDim.new(0,5))
-
--- Minimise button
-local MinBtn=N('TextButton',{Text='─',Size=UDim2.new(0,22,0,22),Position=UDim2.new(1,-52,0.5,-11),
-    BackgroundColor3=C.El,BackgroundTransparency=0.2,Font=Enum.Font.GothamBold,
-    TextSize=13,TextColor3=C.TS,BorderSizePixel=0,ZIndex=8,Parent=TBar})
-rnd(MinBtn,UDim.new(0,5))
-
--- Minimise / Restore logic
-local function minimize()
-    Main.Visible=false; Pill.Visible=true
+local function tw(obj,props,t)
+    TweenService:Create(obj,TweenInfo.new(t or 0.15,Enum.EasingStyle.Quad),props):Play()
 end
-local function restore()
-    Pill.Visible=false; Main.Visible=true
+local function rnd(obj,r) local u=Instance.new('UICorner'); u.CornerRadius=r or UDim.new(0,8); u.Parent=obj end
+local function pd(obj,t,b,l,r)
+    local p=Instance.new('UIPadding'); p.PaddingTop=UDim.new(0,t or 8)
+    p.PaddingBottom=UDim.new(0,b or 8); p.PaddingLeft=UDim.new(0,l or 10)
+    p.PaddingRight=UDim.new(0,r or 10); p.Parent=obj
 end
-MinBtn.MouseButton1Click:Connect(minimize)
-MinBtn.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch then minimize() end end)
-Pill.MouseButton1Click:Connect(restore)
-Pill.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch then restore() end end)
-CloseBtn.MouseButton1Click:Connect(function() SG:Destroy(); getgenv().DeltaHub_Loaded=false end)
+local function strk(obj,col,t)
+    local s=Instance.new('UIStroke'); s.Color=col or C.AccD; s.Thickness=t or 1; s.Parent=obj
+end
 
--- Drag main window
-local _d,_s,_m=false
-TBar.InputBegan:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then
-        _d=true; _s=Main.Position; _m=i.Position end
-end)
-UIS.InputChanged:Connect(function(i)
-    if _d and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then
-        local d=i.Position-_m
-        Main.Position=UDim2.new(_s.X.Scale,_s.X.Offset+d.X,_s.Y.Scale,_s.Y.Offset+d.Y)
-    end
-end)
-UIS.InputEnded:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then _d=false end
-end)
--- Drag pill
-local _pd,_ps,_pm=false
-Pill.InputBegan:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.Touch then _pd=true; _ps=Pill.Position; _pm=i.Position end
-end)
-UIS.InputChanged:Connect(function(i)
-    if _pd and i.UserInputType==Enum.UserInputType.Touch then
-        local d=i.Position-_pm
-        Pill.Position=UDim2.new(_ps.X.Scale,_ps.X.Offset+d.X,_ps.Y.Scale,_ps.Y.Offset+d.Y)
-    end
-end)
-UIS.InputEnded:Connect(function(i)
-    if i.UserInputType==Enum.UserInputType.Touch then _pd=false end
+-- ── WINDOW ───────────────────────────────────────────
+local sg=N('ScreenGui',{Name='DeltaHub',ResetOnSpawn=false,ZIndexBehavior=Enum.ZIndexBehavior.Sibling,Parent=gethui and gethui() or Player.PlayerGui})
+local win=N('Frame',{Size=UDim2.new(0,WW,0,WH+TH+SW),BackgroundColor3=C.BG,BorderSizePixel=0,Position=UDim2.new(0.5,-WW/2,0.5,-(WH+TH+SW)/2),Parent=sg})
+rnd(win); strk(win,C.AccD,1)
+
+local bar=N('Frame',{Size=UDim2.new(1,0,0,TH),BackgroundColor3=C.Panel,BorderSizePixel=0,Parent=win})
+rnd(bar)
+N('TextLabel',{Text='⚡ Delta Hub',Size=UDim2.new(1,-60,1,0),Position=UDim2.new(0,12,0,0),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=bar})
+
+local minBtn=N('TextButton',{Text='─',Size=UDim2.new(0,28,0,22),Position=UDim2.new(1,-60,0.5,-11),BackgroundColor3=C.El,BorderSizePixel=0,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=C.TS,Parent=bar})
+rnd(minBtn,UDim.new(0,6))
+local body=N('Frame',{Size=UDim2.new(1,0,1,-TH),Position=UDim2.new(0,0,0,TH),BackgroundTransparency=1,Parent=win})
+local minimised=false
+minBtn.MouseButton1Click:Connect(function()
+    minimised=not minimised
+    tw(body,{Size=minimised and UDim2.new(1,0,0,0) or UDim2.new(1,0,1,-TH)})
+    minBtn.Text=minimised and '+' or '─'
 end)
 
--- Body
-local Body=N('Frame',{Size=UDim2.new(1,0,1,-TH),Position=UDim2.new(0,0,0,TH),BackgroundTransparency=1,Parent=Main})
+-- draggable title bar
+do local d,ox,oy=false
+    bar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then d=true; ox=i.Position.X-win.Position.X.Offset; oy=i.Position.Y-win.Position.Y.Offset end end)
+    UIS.InputChanged:Connect(function(i) if d and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then win.Position=UDim2.new(0,i.Position.X-ox,0,i.Position.Y-oy) end end)
+    UIS.InputEnded:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then d=false end end)
+end
 
--- Sidebar
-local Sidebar=N('Frame',{Size=UDim2.new(0,SW,1,0),BackgroundColor3=C.Panel,BorderSizePixel=0,Parent=Body})
-N('Frame',{Size=UDim2.new(0,1,1,0),Position=UDim2.new(1,-1,0,0),BackgroundColor3=C.Sep,BorderSizePixel=0,Parent=Sidebar})
-local TabList=N('ScrollingFrame',{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,
-    ScrollBarThickness=0,ScrollingDirection=Enum.ScrollingDirection.Y,
-    ElasticBehavior=Enum.ElasticBehavior.Never,CanvasSize=UDim2.new(0,0,0,0),
-    AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=Sidebar})
-vl(TabList,0)
+-- ── TABS ─────────────────────────────────────────────
+local tabRow=N('Frame',{Size=UDim2.new(1,0,0,SW),BackgroundColor3=C.Panel,BorderSizePixel=0,Parent=body})
+local layout1=Instance.new('UIListLayout'); layout1.FillDirection=Enum.FillDirection.Horizontal; layout1.SortOrder=Enum.SortOrder.LayoutOrder; layout1.Parent=tabRow
+local content=N('Frame',{Size=UDim2.new(1,0,1,-SW),Position=UDim2.new(0,0,0,SW),BackgroundColor3=C.BG,BorderSizePixel=0,ClipsDescendants=true,Parent=body})
 
--- Content scroll
-local Content=N('ScrollingFrame',{Size=UDim2.new(1,-SW,1,0),Position=UDim2.new(0,SW,0,0),
-    BackgroundTransparency=1,ScrollBarThickness=3,ScrollBarImageColor3=C.Acc,
-    ScrollingDirection=Enum.ScrollingDirection.Y,ElasticBehavior=Enum.ElasticBehavior.Never,
-    CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,Parent=Body})
-pd(Content,6,10,8,8); vl(Content,5)
-
--- ─── TABS ────────────────────────────────────────────
 local TABS={'Dupe','Land','Axe','Player','Wood'}
-local ICONS={Dupe='📦',Land='🏠',Axe='🪓',Player='👤',Wood='🌲'}
-local pages,tabBtns,activeTab={},{},nil
+local tabBtns={}; local pages={}
+for i,name in ipairs(TABS) do
+    local btn=N('TextButton',{Size=UDim2.new(1/#TABS,0,1,0),LayoutOrder=i,BackgroundColor3=C.El,BorderSizePixel=0,Font=Enum.Font.GothamBold,TextSize=11,TextColor3=C.TS,Text=name,Parent=tabRow})
+    tabBtns[name]=btn
+    local page=N('ScrollingFrame',{Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=3,ScrollBarImageColor3=C.Acc,CanvasSize=UDim2.new(0,0,0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false,Parent=content})
+    local layout=Instance.new('UIListLayout'); layout.SortOrder=Enum.SortOrder.LayoutOrder; layout.Padding=UDim.new(0,6); layout.Parent=page
+    pd(page,6,6,6,6)
+    pages[name]=page
+end
 
 local function switchTab(name)
-    for _,pg in pairs(pages) do pg.Visible=false end
-    for _,b in pairs(tabBtns) do
-        b.BackgroundColor3=C.Panel; b.TextColor3=C.TS
-        if b:FindFirstChild('Ln') then b.Ln.BackgroundTransparency=1 end
+    for n,p in pairs(pages) do
+        p.Visible=(n==name)
+        tw(tabBtns[n],{BackgroundColor3=n==name and C.ElH or C.El,TextColor3=n==name and C.Acc or C.TS},0.1)
     end
-    if pages[name] then pages[name].Visible=true end
-    if tabBtns[name] then
-        tabBtns[name].BackgroundColor3=C.El; tabBtns[name].TextColor3=C.Acc
-        if tabBtns[name]:FindFirstChild('Ln') then tabBtns[name].Ln.BackgroundTransparency=0 end
-    end
-    activeTab=name
+end
+for name,btn in pairs(tabBtns) do
+    btn.MouseButton1Click:Connect(function() switchTab(name) end)
+    btn.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch then switchTab(name) end end)
 end
 
-for _,name in ipairs(TABS) do
-    local btn=N('TextButton',{Text=ICONS[name]..'\n'..name,Size=UDim2.new(1,0,0,36),
-        BackgroundColor3=C.Panel,Font=Enum.Font.GothamBold,TextSize=9,
-        TextColor3=C.TS,TextWrapped=false,BorderSizePixel=0,Parent=TabList})
-    local ln=N('Frame',{Name='Ln',Size=UDim2.new(0,3,0.5,0),Position=UDim2.new(1,-3,0.25,0),
-        BackgroundColor3=C.Acc,BackgroundTransparency=1,BorderSizePixel=0,Parent=btn})
-    rnd(ln,UDim.new(0,2)); tabBtns[name]=btn
-    local pg=N('Frame',{Size=UDim2.new(1,0,0,0),AutomaticSize=Enum.AutomaticSize.Y,
-        BackgroundTransparency=1,Visible=false,Parent=Content})
-    vl(pg,8); pages[name]=pg
-    local function act() switchTab(name) end
-    btn.MouseButton1Click:Connect(act)
-    btn.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch then act() end end)
-end
-
--- ─── COMPONENTS ──────────────────────────────────────
+-- ── UI COMPONENTS ─────────────────────────────────────
 local function Section(p,txt)
-    local f=N('Frame',{Size=UDim2.new(1,0,0,18),BackgroundTransparency=1,Parent=p})
-    N('TextLabel',{Text=txt:upper(),Size=UDim2.new(1,-4,0,12),Position=UDim2.new(0,2,0,4),
-        BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=8,
-        TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=f})
+    local f=N('Frame',{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,Parent=p})
+    N('TextLabel',{Text=txt:upper(),Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=10,TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=f})
     N('Frame',{Size=UDim2.new(1,0,0,1),Position=UDim2.new(0,0,1,-1),BackgroundColor3=C.Sep,BorderSizePixel=0,Parent=f})
 end
 
@@ -690,12 +654,12 @@ end
 -- ── DUPE ────────────────────────────────────────────────
 do
     local Dp=pages['Dupe']
+    Section(Dp,'How It Works')
+    Hint(Dp,'The dupe hooks SelectLoadPlot and uses the game\'s own Load button (via firesignal) so RequestLoad fires with the correct args. Your character will reset and axes will be doubled.')
     Section(Dp,'Slot Settings')
-    Hint(Dp,'Set both sliders to the same slot number you loaded in-game (e.g. both = 1).')
-    Slid(Dp,'Loaded Slot',1,6,1,1,function(v) dupeSlots.load=v end)
-    Slid(Dp,'Slot to Save',1,6,1,1,function(v) dupeSlots.save=v end)
+    Hint(Dp,'Set the slider to the slot number you have a save in (e.g. 1). Make sure your land is loaded first.')
+    Slid(Dp,'Slot to Load',1,6,1,1,function(v) dupeSlot=v end)
     Section(Dp,'Dupe Axe')
-    Hint(Dp,'Load your land first. Press Dupe — server will reset your character and reload your save. Axes will be doubled.')
     Btn(Dp,'🪓  Dupe Axe',function() task.spawn(dupeAxe) end)
     Section(Dp,'Manual')
     Btn(Dp,'Drop All Axes',function()
@@ -761,4 +725,4 @@ do
 end
 
 switchTab('Dupe')
-print('[Delta Hub] Loaded | ─ = minimise | drag title bar | 5 tabs')
+print('[Delta Hub v8] Loaded — dupe rebuilt with GUI-based load flow')
