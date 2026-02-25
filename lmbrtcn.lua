@@ -221,9 +221,11 @@ local function dupeAxe()
     local c2  = char()
     local hrp = c2 and c2:FindFirstChild('HumanoidRootPart')
     local h2  = c2 and c2:FindFirstChild('Humanoid')
-    if hrp then hrp.CFrame = CFrame.new(0, 500, 0) end  -- move off land first
-    task.wait(0.05)
-    if h2 then h2.Health = 0 end  -- server-side kill
+    -- Y = -2000 is BELOW the map (negative Y = down in Roblox).
+    -- Was wrongly set to +500 (up in air) which is why char never moved.
+    -- LT2 has a server-side kill plane under the map at around Y = -100.
+    if hrp then hrp.CFrame = CFrame.new(0, -2000, 0) end
+    if h2  then h2.Health = 0 end  -- backup kill in case kill plane is slow
 end
 
 -- ═══════════════════════════════════════════════════════
