@@ -1,51 +1,43 @@
 --[[
-    LT2 Axe Dupe v3 - Correct Mechanism
-    Based on remote spy log analysis.
-
-    HOW IT ACTUALLY WORKS:
-    1. SetPropertyPurchasingValue bypass tells the server to ADD axes on top
-       of your existing backpack instead of clearing it first
-    2. RequestLoad fires → server gives all saved axes (ConfirmIdentity fires
-       for each one) then calls SelectLoadPlot.OnClientInvoke on the client
-    3. SelectLoadPlot puts the game in property placement mode (camera scriptable,
-       character frozen waiting for plot selection)
-    4. We kill the character WHILE CurrentlySavingOrLoading is still true on
-       the server — this is key, the server skips the normal backpack clear
-       on death because a load is in progress
-    5. Character respawns at default spawn with ALL axes intact (doubled)
-    6. Plot selection UI appears and then closes itself
-
+    LT2 Axe Dupe v4 - Correct Order
+    
+    REAL SEQUENCE (from log analysis + user description):
+    1. Hook SelectLoadPlot so it returns immediately (prevents UI freeze)
+    2. Teleport character to void → dies "accidentally" (outside map)
+    3. Wait for CharacterAdded (respawn at default spawn)
+    4. Fire SetPropertyPurchasingValue bypass + RequestLoad while respawning
+    5. Server gives saved axes WITHOUT clearing backpack 
+       (char just respawned, CurrentlySavingOrLoading guards the wipe)
+    6. SelectLoadPlot fires → our hook returns nil → load finishes
+    7. Plot selection UI briefly appears then closes
+    8. Axes are doubled in backpack
+    
     REQUIREMENTS:
-    - At least 1 axe in backpack
-    - A save in SLOT that contains at least 1 axe
-    - Level 7+ executor (Synapse X, Solara, etc.)
-
-    USAGE:
-    - Set SLOT to whichever slot your save is in (default 1)
-    - Run script
-    - Wait ~10 seconds for full cycle
-    - After first run: save manually, then run again to double again
-    - Or set AUTO_SAVE = true
+    - At least 1 axe saved in your slot
+    - Level 7+ executor
+    
+    CONFIG:
+    - SLOT: your save slot (1-6)
+    - AUTO_SAVE: save automatically after each cycle
+    - CYCLES: how many times to double (each doubles axes count)
 ]]
 
 local RS      = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local lp      = Players.LocalPlayer
 
--- Remotes
 local ClientMayLoad         = RS.LoadSaveRequests.ClientMayLoad
 local RequestLoad           = RS.LoadSaveRequests.RequestLoad
 local RequestSave           = RS.LoadSaveRequests.RequestSave
 local SetPropertyPurchasing = RS.PropertyPurchasing.SetPropertyPurchasingValue
 local SelectLoadPlot        = RS.PropertyPurchasing.SelectLoadPlot
 
--- Config
-local SLOT      = 1     -- your save slot number
-local AUTO_SAVE = false -- auto-save after dupe so you can chain runs
-local CYCLES    = 1     -- number of dupe cycles (each doubles axes)
+local SLOT      = 1
+local AUTO_SAVE = false
+local CYCLES    = 1
 
 local function log(msg)
-    print("[AxeDupe v3] " .. tostring(msg))
+    print("[AxeDupe v4] " .. tostring(msg))
 end
 
 local function countAxes()
@@ -62,137 +54,120 @@ local function countAxes()
     return n
 end
 
-local function killChar()
-    local char = lp.Character
-    if not char then return end
-    -- Teleport into the void — same as what the working script does
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then
-        hrp.CFrame = CFrame.new(0, -500, 0)
-    end
-    -- Also zero health as backup
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if hum then
-        hum.Health = 0
-    end
-end
-
-local function waitForRespawn()
-    local newChar = lp.CharacterAdded:Wait()
-    -- Wait for humanoid to be fully loaded
-    newChar:WaitForChild("Humanoid")
-    newChar:WaitForChild("HumanoidRootPart")
-    task.wait(1.5)
-    return newChar
-end
-
 local function dupeOnce()
     local before = countAxes()
     log("Axes before: " .. before)
 
-    -- Step 1: Check server is OK to load
-    local mayLoad = ClientMayLoad:InvokeServer(lp)
-    if not mayLoad then
-        log("ERROR: ClientMayLoad denied. Wait a moment and retry.")
-        return false
-    end
-
-    -- Step 2: Hook SelectLoadPlot BEFORE firing RequestLoad
-    -- The server will call this on us mid-load — we intercept it,
-    -- kill the character (while CurrentlySavingOrLoading=true so backpack
-    -- is preserved), wait for respawn, then return to let the server finish.
-    local originalCallback = getcallbackvalue(SelectLoadPlot, "OnClientInvoke")
-
-    SelectLoadPlot.OnClientInvoke = function(structureModel)
-        log("SelectLoadPlot fired — axes should now be in backpack. Killing character...")
-
-        -- Kill the character while load is still in progress
-        -- Server won't clear backpack because CurrentlySavingOrLoading is true
-        task.spawn(killChar)
-
-        -- Wait for respawn at default spawn
-        log("Waiting for respawn...")
-        waitForRespawn()
-        log("Respawned! Axes should be doubled.")
-
-        -- Restore original callback so subsequent runs work correctly
-        SelectLoadPlot.OnClientInvoke = originalCallback
-
-        -- Return nil plot (no land placed — that's fine, we just want the axes)
+    -- Step 1: Hook SelectLoadPlot BEFORE everything
+    -- Server calls this on client mid-load expecting a plot selection
+    -- We return nil, 0 immediately so it doesn't block and no UI pops up
+    local origCallback = getcallbackvalue(SelectLoadPlot, "OnClientInvoke")
+    SelectLoadPlot.OnClientInvoke = function(...)
+        log("SelectLoadPlot intercepted — returning nil to skip plot selection")
+        -- Restore original so future normal loads still work
+        task.delay(0.5, function()
+            SelectLoadPlot.OnClientInvoke = origCallback
+        end)
         return nil, 0
     end
 
-    -- Step 3: SetPropertyPurchasingValue bypass
-    -- false → true → false tells server to add axes on top rather than clear
-    SetPropertyPurchasing:InvokeServer(false)
-    task.wait(0.15)
-    SetPropertyPurchasing:InvokeServer(true)
-    task.wait(0.15)
-    SetPropertyPurchasing:InvokeServer(false)
-    task.wait(0.15)
-
-    -- Step 4: Fire RequestLoad in a separate thread
-    -- It will block until SelectLoadPlot resolves (which we handle above)
-    log("Firing RequestLoad on slot " .. SLOT .. "...")
-    local loadDone = false
-    task.spawn(function()
-        local ok, err = RequestLoad:InvokeServer(SLOT, lp)
-        loadDone = true
-        if ok then
-            log("RequestLoad returned: success")
-        else
-            log("RequestLoad returned: " .. tostring(err))
-        end
-    end)
-
-    -- Step 5: Wait for the full cycle to complete
-    -- (SelectLoadPlot will handle the kill + respawn internally)
-    local timeout = 30
-    local elapsed = 0
-    while not loadDone and elapsed < timeout do
-        task.wait(0.5)
-        elapsed += 0.5
-    end
-
-    if not loadDone then
-        log("WARNING: RequestLoad timed out. SelectLoadPlot may not have fired.")
-        -- Restore callback in case something went wrong
-        SelectLoadPlot.OnClientInvoke = originalCallback
+    -- Step 2: Verify load is allowed
+    local mayLoad = ClientMayLoad:InvokeServer(lp)
+    if not mayLoad then
+        log("ERROR: ClientMayLoad denied")
+        SelectLoadPlot.OnClientInvoke = origCallback
         return false
     end
 
-    task.wait(2) -- let ConfirmIdentity calls finish initializing axes
+    -- Step 3: Teleport character outside the map → "accidental" death
+    local char = lp.Character
+    if not char then
+        log("ERROR: No character found")
+        SelectLoadPlot.OnClientInvoke = origCallback
+        return false
+    end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        log("ERROR: No HumanoidRootPart")
+        SelectLoadPlot.OnClientInvoke = origCallback
+        return false
+    end
+
+    log("Sending character outside map...")
+    -- Teleport far below the map — looks like a fall death to the server
+    hrp.CFrame = CFrame.new(hrp.Position.X, -1000, hrp.Position.Z)
+
+    -- Step 4: Wait for death and respawn
+    log("Waiting for death...")
+    local newChar = lp.CharacterAdded:Wait()
+    newChar:WaitForChild("HumanoidRootPart")
+    newChar:WaitForChild("Humanoid")
+    log("Respawned! Firing load sequence...")
+
+    -- Small wait to let respawn fully settle server-side
+    task.wait(0.3)
+
+    -- Step 5: SetPropertyPurchasingValue bypass then RequestLoad
+    -- This runs while character just respawned — server skips backpack clear
+    SetPropertyPurchasing:InvokeServer(false)
+    task.wait(0.1)
+    SetPropertyPurchasing:InvokeServer(true)
+    task.wait(0.1)
+    SetPropertyPurchasing:InvokeServer(false)
+    task.wait(0.1)
+
+    -- Fire RequestLoad in a separate thread so we don't block
+    log("Firing RequestLoad on slot " .. SLOT .. "...")
+    local done = false
+    task.spawn(function()
+        local ok, err = RequestLoad:InvokeServer(SLOT, lp)
+        done = true
+        log("RequestLoad result: " .. tostring(ok) .. " / " .. tostring(err))
+    end)
+
+    -- Wait for it to finish (SelectLoadPlot hook resolves it instantly)
+    local t = 0
+    while not done and t < 20 do
+        task.wait(0.5)
+        t += 0.5
+    end
+
+    if not done then
+        log("WARNING: RequestLoad timed out")
+        SelectLoadPlot.OnClientInvoke = origCallback
+        return false
+    end
+
+    -- Let ConfirmIdentity calls finish initializing all axes
+    task.wait(2)
 
     local after = countAxes()
     log("Axes after: " .. after)
 
     if after > before then
-        log("SUCCESS: " .. before .. " → " .. after .. " axes!")
+        log("SUCCESS! " .. before .. " → " .. after)
         return true
     else
-        log("No increase detected. Check: does your save actually have axes in it?")
+        log("No change. Make sure your slot actually has axes saved in it.")
         return false
     end
 end
 
 -- Main
-log("=== LT2 Axe Dupe v3 ===")
-log("Slot: " .. SLOT .. " | Cycles: " .. CYCLES .. " | AutoSave: " .. tostring(AUTO_SAVE))
+log("=== LT2 Axe Dupe v4 ===")
+log("Slot: " .. SLOT .. " | AutoSave: " .. tostring(AUTO_SAVE) .. " | Cycles: " .. CYCLES)
 task.wait(1)
 
 for i = 1, CYCLES do
-    log("--- Cycle " .. i .. " / " .. CYCLES .. " ---")
+    log("--- Cycle " .. i .. "/" .. CYCLES .. " ---")
     local ok = dupeOnce()
 
     if ok and AUTO_SAVE then
-        task.wait(2)
-        log("Auto-saving...")
+        task.wait(1.5)
+        log("Auto-saving to slot " .. SLOT .. "...")
         local saveOk, saveErr = RequestSave:InvokeServer(SLOT, lp)
-        if saveOk then
-            log("Saved successfully!")
-        else
-            log("Save failed: " .. tostring(saveErr))
-        end
+        log(saveOk and "Save OK!" or "Save failed: " .. tostring(saveErr))
     end
 
     if i < CYCLES then
@@ -200,8 +175,7 @@ for i = 1, CYCLES do
     end
 end
 
-local final = countAxes()
-log("=== Done! Final axe count: " .. final .. " ===")
+log("=== Done! Axe count: " .. countAxes() .. " ===")
 if not AUTO_SAVE then
-    log("Save your game manually before running again to chain dupes!")
+    log("Save manually before running again to chain dupes!")
 end
