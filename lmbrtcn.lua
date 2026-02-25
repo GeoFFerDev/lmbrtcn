@@ -26,13 +26,36 @@ local CollectionService = game:GetService("CollectionService")
 local Lighting          = game:GetService("Lighting")
 
 local LP   = Players.LocalPlayer
-local PGui = LP:WaitForChild("PlayerGui")
+-- Delta executor safe GUI parent: use gethui() > CoreGui > PlayerGui
+local GuiParent = (typeof(gethui) == "function" and gethui())
+               or game:GetService("CoreGui")
+               or LP:FindFirstChild("PlayerGui")
+               or LP:WaitForChild("PlayerGui")
 local Cam  = workspace.CurrentCamera
 
--- Roblox paths
+-- Roblox paths (non-blocking — use FindFirstChild, resolve lazily)
 local RS   = game:GetService("ReplicatedStorage")
-local Interaction = RS:WaitForChild("Interaction",10)
-local Transactions = RS:FindFirstChild("Transactions") or RS:FindFirstChild("Interaction")
+local Interaction  = nil  -- resolved lazily inside functions
+local Transactions = nil  -- resolved lazily inside functions
+
+-- Lazy resolver so we never block at startup
+local function GetInteraction()
+    if not Interaction then
+        Interaction = RS:FindFirstChild("Interaction")
+    end
+    return Interaction
+end
+local function GetTransactions()
+    if not Transactions then
+        Transactions = RS:FindFirstChild("Transactions")
+                    or RS:FindFirstChild("Interaction")
+    end
+    return Transactions
+end
+
+-- Alias PGui for notification system
+local PGui = GuiParent
+print("[LT2 Script] ✅ Starting... GUI parent = " .. tostring(GuiParent))
 
 -- ============================================================
 -- COLORS & THEME
@@ -100,9 +123,12 @@ local function Notify(msg, color)
     color = color or C.ACCENT
     local screen = PGui:FindFirstChild("LT2Notif")
     if not screen then
-        screen = Instance.new("ScreenGui", PGui)
+        screen = Instance.new("ScreenGui")
         screen.Name = "LT2Notif"
         screen.ResetOnSpawn = false
+        screen.DisplayOrder = 1000
+        screen.IgnoreGuiInset = true
+        pcall(function() screen.Parent = GuiParent end)
     end
     local frame = Instance.new("Frame", screen)
     frame.Size = UDim2.new(0, 300, 0, 42)
@@ -257,8 +283,8 @@ end
 
 local function FreeLand()
     -- Fire the property purchase mode event (server validates but we attempt)
-    if Interaction then
-        local evt = Interaction:FindFirstChild("ClientEnterPropertyPurchaseMode")
+    if GetInteraction() then
+        local evt = GetInteraction():FindFirstChild("ClientEnterPropertyPurchaseMode")
         if evt then
             SafeFireServer(evt, true)
         end
@@ -276,16 +302,16 @@ local function FreeLand()
         end
     end
     Notify("ℹ️ Attempting FreeLand via RemoteFunction...", C.WARN)
-    if Transactions then
-        local rf = Transactions:FindFirstChild("SelectLoadPlot")
+    if GetTransactions() then
+        local rf = GetTransactions():FindFirstChild("SelectLoadPlot")
         if rf then SafeInvokeServer(rf) end
     end
 end
 
 local function MaxLand()
     -- Expand all available plots (fires expansion events)
-    if Interaction then
-        local evt = Interaction:FindFirstChild("ClientExpandedProperty")
+    if GetInteraction() then
+        local evt = GetInteraction():FindFirstChild("ClientExpandedProperty")
         if evt then
             for i = 1, 5 do
                 SafeFireServer(evt, i)
@@ -297,8 +323,8 @@ local function MaxLand()
 end
 
 local function ForceSave()
-    if Transactions then
-        local rf = Transactions:FindFirstChild("RequestSave")
+    if GetTransactions() then
+        local rf = GetTransactions():FindFirstChild("RequestSave")
         if rf then
             local res = SafeInvokeServer(rf)
             Notify("💾 Force save attempted! Result: " .. tostring(res), C.ACCENT)
@@ -562,8 +588,8 @@ local function StartAutoBuy(itemName, priceLimit, amount)
         Notify("🛒 Auto Buy started: " .. itemName, C.ACCENT)
         while not State.autoBuyStop and purchased < amount do
             -- Navigate to shop area and attempt purchase
-            if Transactions then
-                local rf = Transactions:FindFirstChild("AttemptPurchase")
+            if GetTransactions() then
+                local rf = GetTransactions():FindFirstChild("AttemptPurchase")
                 if rf then
                     local ok, res = pcall(function()
                         return rf:InvokeServer(itemName)
@@ -596,8 +622,8 @@ local function PurchaseRukiryaxe()
     -- Teleport to WoodRUs, attempt purchase
     TeleportTo(CFrame.new(5184, 65, 535))
     task.wait(1)
-    if Transactions then
-        local rf = Transactions:FindFirstChild("AttemptPurchase")
+    if GetTransactions() then
+        local rf = GetTransactions():FindFirstChild("AttemptPurchase")
         if rf then
             local ok, res = pcall(function() return rf:InvokeServer("Rukiryaxe") end)
             if ok then
@@ -761,8 +787,8 @@ end
 local function DestroySelectedBlueprints()
     for _, bp in ipairs(State.selectedBlueprints) do
         pcall(function()
-            if Interaction then
-                local evt = Interaction:FindFirstChild("DestroyStructure")
+            if GetInteraction() then
+                local evt = GetInteraction():FindFirstChild("DestroyStructure")
                 if evt then SafeFireServer(evt, bp) end
             end
             bp:Destroy()
@@ -792,15 +818,21 @@ end
 -- GUI BUILDER
 -- ============================================================
 
--- Remove old GUI
-local old = PGui:FindFirstChild("LT2_Script")
-if old then old:Destroy() end
+-- Remove old GUI (check all valid parents)
+for _, gui in ipairs({GuiParent}) do
+    local old = gui:FindFirstChild("LT2_Script")
+    if old then old:Destroy() end
+end
 
-local ScreenGui = Instance.new("ScreenGui", PGui)
-ScreenGui.Name          = "LT2_Script"
-ScreenGui.ResetOnSpawn  = false
-ScreenGui.DisplayOrder  = 999
-ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+-- Build ScreenGui with all props set BEFORE parenting (Delta safe)
+local ScreenGui = Instance.new("ScreenGui")
+ScreenGui.Name              = "LT2_Script"
+ScreenGui.ResetOnSpawn      = false
+ScreenGui.DisplayOrder      = 999
+ScreenGui.ZIndexBehavior    = Enum.ZIndexBehavior.Sibling
+ScreenGui.IgnoreGuiInset    = true
+pcall(function() ScreenGui.Parent = GuiParent end)
+print("[LT2] ScreenGui parented to: " .. tostring(GuiParent))
 
 -- Main window
 local MainFrame = Instance.new("Frame", ScreenGui)
@@ -1290,8 +1322,8 @@ MakeButton(sf, "💾  Force Save", C.ACCENT2, ForceSave)
 Spacer(sf, 4)
 Section(sf, "Quick Stats")
 MakeButton(sf, "💰  Get Current Funds", C.BG3, function()
-    if Transactions then
-        local rf = Transactions:FindFirstChild("GetFunds")
+    if GetTransactions() then
+        local rf = GetTransactions():FindFirstChild("GetFunds")
         if rf then
             local res = SafeInvokeServer(rf)
             Notify("💰 Funds: $" .. tostring(res or "?"), C.ACCENT)
@@ -1425,8 +1457,8 @@ MakeButton(buyF, "🪓  Purchase Rukiryaxe – $7,400", Color3.fromRGB(255, 200,
 MakeButton(buyF, "🔵  Purchase BluesteelAxe", C.BG3, function()
     TeleportTo(CFrame.new(5184, 65, 535))
     task.wait(1)
-    if Transactions then
-        local rf = Transactions:FindFirstChild("AttemptPurchase")
+    if GetTransactions() then
+        local rf = GetTransactions():FindFirstChild("AttemptPurchase")
         if rf then SafeInvokeServer(rf, "BluesteelAxe") end
     end
     Notify("🔵 BluesteelAxe purchase attempted!", C.ACCENT)
@@ -1434,8 +1466,8 @@ end)
 MakeButton(buyF, "🔥  Purchase FireAxe", C.BG3, function()
     TeleportTo(CFrame.new(5184, 65, 535))
     task.wait(1)
-    if Transactions then
-        local rf = Transactions:FindFirstChild("AttemptPurchase")
+    if GetTransactions() then
+        local rf = GetTransactions():FindFirstChild("AttemptPurchase")
         if rf then SafeInvokeServer(rf, "FireAxe") end
     end
     Notify("🔥 FireAxe purchase attempted!", C.ACCENT)
@@ -1555,8 +1587,8 @@ MakeButton(buildF, "▶  Start Auto Build", C.ACCENT2, function()
         end
         Notify("📋 Found " .. #blueprints .. " blueprints.", C.ACCENT)
         for _, bp in ipairs(blueprints) do
-            if Interaction then
-                local evt = Interaction:FindFirstChild("ClientPlacedBlueprint")
+            if GetInteraction() then
+                local evt = GetInteraction():FindFirstChild("ClientPlacedBlueprint")
                 if evt then SafeFireServer(evt, bp) end
             end
             task.wait(0.5)
@@ -1604,8 +1636,8 @@ end)
 MakeButton(buildF, "📐  Fill Blueprints", C.ACCENT2, function()
     Notify("📐 Filling " .. #State.selectedBlueprints .. " blueprints...", C.ACCENT)
     for _, bp in ipairs(State.selectedBlueprints) do
-        if Interaction then
-            local evt = Interaction:FindFirstChild("ClientPlacedBlueprint")
+        if GetInteraction() then
+            local evt = GetInteraction():FindFirstChild("ClientPlacedBlueprint")
             if evt then SafeFireServer(evt, bp) end
         end
         task.wait(0.3)
@@ -1765,3 +1797,11 @@ end)
 -- ============================================================
 Notify("✅ LT2 Delta Script loaded! Press RCtrl to toggle.", C.ACCENT)
 print("[LT2 Script] ✅ Loaded successfully! RightControl = Toggle UI")
+
+-- Extra safety: if MainFrame somehow invisible, force show
+task.delay(1, function()
+    if MainFrame then
+        MainFrame.Visible = true
+        print("[LT2 Script] 👁️ MainFrame forced visible. Size: " .. tostring(MainFrame.AbsoluteSize))
+    end
+end)
