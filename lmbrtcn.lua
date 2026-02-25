@@ -1,54 +1,36 @@
 -- ═══════════════════════════════════════════════════════
---  Delta Hub  |  LT2  |  Mobile-First  |  v9 BUGFIX
+--  Delta Hub  |  LT2  |  Mobile-First  |  v10
 --
---  BUGS FIXED FROM v8:
+--  ROOT CAUSE FIX (why v7, v8, v9 ALL failed):
 --
---  BUG #1 (PRIMARY — causes "stuck at dupe running"):
---    CharacterAdded:Wait(25) → RBXScriptSignal:Wait() does NOT
---    accept timeout params. "25" is silently ignored, causing an
---    infinite block if the character never respawns. dupeRunning
---    stayed true FOREVER.
---    FIX: task.delay-based timeout flag + dedicated safeWaitChar().
+--  WRONG REMOTE PATH (v7/v8/v9):
+--    ReplicatedStorage.PropertyPurchasing.RequestLoad   ← DOES NOT EXIST
+--    ReplicatedStorage.PropertyPurchasing.RequestSave   ← DOES NOT EXIST
 --
---  BUG #2 (PRIMARY — no global safety net):
---    When hookFired=true, the 60s hookLoop exits. But if the char
---    spawn task inside ourHook hangs (see Bug #1), dupeRunning is
---    never cleared. Zero global failsafe.
---    FIX: Global 25s safety timeout task that always resets state.
+--  CORRECT PATHS (v10):
+--    ReplicatedStorage.LoadSaveRequests.RequestSave:InvokeServer(slot)
+--    ReplicatedStorage.LoadSaveRequests.RequestLoad:InvokeServer(slot)
+--    ReplicatedStorage.LoadSaveRequests.GetMetaData:InvokeServer(player)
+--    ReplicatedStorage.PropertyPurchasing.SelectLoadPlot  ← still correct
 --
---  BUG #3 (firesignal may silently fail):
---    firesignal(loadBtn.MouseButton1Click) fires the signal but the
---    game's handler can bail early if the GUI isn't in the exact
---    expected state. No fallback existed.
---    FIX: After firesignal, also attempt direct RequestLoad calls
---    with the arg combinations the server expects.
+--  MISSING STEP (v7/v8/v9): Never called RequestSave before RequestLoad.
+--  Without saving first, the slot has no axe data → nothing to double.
 --
---  BUG #4 (origHook wipes game's handler):
---    origHook captured nil if game's PropertyPurchasingClient hadn't
---    set OnClientInvoke yet. Restoring nil post-dupe wiped the hook
---    permanently, breaking normal loads in the same session.
---    FIX: Restore whatever the CURRENT OnClientInvoke is at restore
---    time, not the captured value at start time.
+--  CORRECT DUPE FLOW (v10):
+--    1. Validate: land loaded, axe in backpack, slot matches CurrentSaveSlot
+--    2. Unequip axe into backpack (so it survives the death clean)
+--    3. Hook SelectLoadPlot.OnClientInvoke (auto-confirm land placement)
+--    4. RequestSave:InvokeServer(slot) → saves current state WITH the axe
+--    5. RequestLoad:InvokeServer(slot) → server TPs char out of map + kills it
+--    6. Char dies → axes stay in Backpack (server void-kills, no drop)
+--    7. Char respawns at spawn → axe still in Backpack
+--    8. Server calls SelectLoadPlot → our hook returns property → land loads
+--    9. Load restores axes from save → NOW DOUBLED
+--   10. TP back to base
 --
---  BUG #5 (slot text match wrong):
---    slotName.Text:find("1") matches "Slot 1", "Slot 10", "Slot 11".
---    Caused wrong slot selection on slots >= 10.
---    FIX: Use tostring(dupeSlot) == slotName.Text or bounded match.
---
---  BUG #6 (hookLoop timeout notification never fired):
---    hookLoopActive was set false at the same time the notify check
---    ran. `if hookLoopActive then notify(...)` always evaluated false.
---    FIX: Save a local copy before the loop exits.
---
---  BUG #7 (SetPropertyPurchValue InvokeServer loop):
---    10 concurrent InvokeServer calls to a RemoteFunction can queue-
---    pile on the server and cause kicks on some LT2 versions.
---    FIX: Space them out with task.wait(0.5) and limit to 4 calls.
---
---  BUG #8 (GUI open wait too short / no retry):
---    0.8s wait after opening GUI before reading slot list. If the
---    server populates it slowly, slot search finds nothing.
---    FIX: Poll until slot buttons appear, up to 3s.
+--  Player values used (confirmed from game):
+--    Player.CurrentSaveSlot     (IntValue, -1 = no slot loaded)
+--    Player.CurrentlySavingOrLoading  (BoolValue)
 -- ═══════════════════════════════════════════════════════
 if getgenv().DeltaHub_Loaded then return print('[Delta] Already loaded.') end
 getgenv().DeltaHub_Loaded = true
@@ -71,19 +53,31 @@ local UIS               = game:GetService('UserInputService')
 local TweenService      = game:GetService('TweenService')
 local ReplicatedStorage = game:GetService('ReplicatedStorage')
 
--- ── REMOTES ───────────────────────────────────────────
-local ClientInteracted        = ReplicatedStorage.Interaction.ClientInteracted
-local ClientIsDragging        = ReplicatedStorage.Interaction.ClientIsDragging
-local RemoteProxy             = ReplicatedStorage.Interaction.RemoteProxy
-local SendUserNotice          = ReplicatedStorage.Notices.SendUserNotice
-local AxeFolder               = ReplicatedStorage.AxeClasses
-local SelectLoadPlot          = ReplicatedStorage.PropertyPurchasing.SelectLoadPlot
-local SetPropertyPurchValue   = ReplicatedStorage.PropertyPurchasing.SetPropertyPurchasingValue
-local ClientPurchasedProperty = ReplicatedStorage.PropertyPurchasing.ClientPurchasedProperty
-local ClientExpandedProperty  = ReplicatedStorage.PropertyPurchasing.ClientExpandedProperty
+-- ── REMOTES (CORRECTED) ────────────────────────────────
+-- ✅ CORRECT: LoadSaveRequests folder (NOT PropertyPurchasing)
+local LoadSaveRequests  = ReplicatedStorage:WaitForChild('LoadSaveRequests')
+local RequestSave       = LoadSaveRequests:WaitForChild('RequestSave')   -- InvokeServer(slot) → true/false
+local RequestLoad       = LoadSaveRequests:WaitForChild('RequestLoad')   -- InvokeServer(slot) → true/false
+local GetMetaData       = LoadSaveRequests:WaitForChild('GetMetaData')   -- InvokeServer(player) → table
 
--- RequestLoad lives in PropertyPurchasing — grab it for the direct-call fallback
-local RequestLoad = ReplicatedStorage.PropertyPurchasing:FindFirstChild('RequestLoad')
+-- ✅ CORRECT: SelectLoadPlot is in PropertyPurchasing
+local PropPurch             = ReplicatedStorage:WaitForChild('PropertyPurchasing')
+local SelectLoadPlot        = PropPurch:WaitForChild('SelectLoadPlot')
+local SetPropertyPurchValue = PropPurch:FindFirstChild('SetPropertyPurchasingValue')
+local ClientPurchasedProperty = PropPurch:FindFirstChild('ClientPurchasedProperty')
+local ClientExpandedProperty  = PropPurch:FindFirstChild('ClientExpandedProperty')
+
+local ClientInteracted  = ReplicatedStorage.Interaction.ClientInteracted
+local ClientIsDragging  = ReplicatedStorage.Interaction.ClientIsDragging
+local RemoteProxy       = ReplicatedStorage.Interaction.RemoteProxy
+local SendUserNotice    = ReplicatedStorage.Notices.SendUserNotice
+local AxeFolder         = ReplicatedStorage.AxeClasses
+
+-- ── PLAYER SAVE VALUES ─────────────────────────────────
+-- CurrentSaveSlot: which slot is currently loaded (-1 = none)
+-- CurrentlySavingOrLoading: true while server is processing save/load
+local CurrentSaveSlot           = Player:WaitForChild('CurrentSaveSlot')
+local CurrentlySavingOrLoading  = Player:WaitForChild('CurrentlySavingOrLoading')
 
 -- ── HELPERS ───────────────────────────────────────────
 local function char()  return Player.Character end
@@ -126,33 +120,50 @@ local function getFreeProp()
     return best
 end
 
--- ── FIXED: safeWaitChar ───────────────────────────────
--- CharacterAdded:Wait() does NOT support timeout args.
--- Use a connection + task.delay pattern instead.
--- FIX for Bug #1 — the root cause of "stuck at dupe running".
+-- Proper CharacterAdded wait with real timeout (seconds)
 local function safeWaitChar(timeoutSecs)
     local result = nil
     local done   = false
     local conn
     conn = Player.CharacterAdded:Connect(function(c)
-        result = c
-        done   = true
-        conn:Disconnect()
+        result = c; done = true; conn:Disconnect()
     end)
     local tStart = os.clock()
-    while not done and (os.clock() - tStart) < (timeoutSecs or 20) do
+    while not done and (os.clock()-tStart) < (timeoutSecs or 20) do
         task.wait(0.1)
     end
-    if not done then
-        pcall(function() conn:Disconnect() end)
-    end
+    if not done then pcall(function() conn:Disconnect() end) end
     return result or char()
 end
 
+-- Check if a save slot has data (NumSaves > 0)
+local function slotHasData(slot)
+    local ok, meta = pcall(function()
+        return GetMetaData:InvokeServer(Player)
+    end)
+    if not ok or not meta then return false end
+    for a, b in pairs(meta) do
+        if a == slot then
+            for c, d in pairs(b) do
+                if c == 'NumSaves' then return d ~= 0 end
+            end
+        end
+    end
+    return false
+end
+
+-- Wait until CurrentlySavingOrLoading goes false (with timeout)
+local function waitForSaveLoad(maxSecs)
+    local tStart = os.clock()
+    while CurrentlySavingOrLoading.Value == true and (os.clock()-tStart) < (maxSecs or 10) do
+        task.wait(0.2)
+    end
+end
+
 -- ═══════════════════════════════════════════════════════
---  AXE MODS (needed below, defined early)
+--  AXE MODS
 -- ═══════════════════════════════════════════════════════
-local axeMods={rangeOn=false,rangeVal=50,noCdOn=false}
+local axeMods = {rangeOn=false, rangeVal=50, noCdOn=false}
 
 local function applyAxeMod()
     if not axeMods.rangeOn and not axeMods.noCdOn then return end
@@ -171,15 +182,22 @@ local function applyAxeMod()
     end)
 end
 
--- ═══════════════════════════════════════════════════════
---  DUPE AXE  —  v9 REWRITE (all 8 bugs fixed)
--- ═══════════════════════════════════════════════════════
-local dupeRunning  = false
-local dupeSlot     = 1
-local dupeStatusLbl = nil  -- set by UI builder below
+local function hookChar(c)
+    c.ChildAdded:Connect(function(o)
+        if o:IsA('Tool') then task.wait(0.25); pcall(applyAxeMod) end
+    end)
+end
+if char() then hookChar(char()) end
+Player.CharacterAdded:Connect(hookChar)
 
-local function setDupeStatus(txt, col)
-    -- updates the status label in the Dupe tab
+-- ═══════════════════════════════════════════════════════
+--  DUPE AXE  —  v10  (correct mechanics, correct remotes)
+-- ═══════════════════════════════════════════════════════
+local dupeRunning   = false
+local dupeSlot      = 1
+local dupeStatusLbl = nil  -- assigned by UI builder below
+
+local function setStatus(txt, col)
     if dupeStatusLbl then
         pcall(function()
             dupeStatusLbl.Text = txt
@@ -188,262 +206,224 @@ local function setDupeStatus(txt, col)
     end
 end
 
--- Polls a parent for children matching predicate, up to maxSecs seconds.
-local function waitForChild(parent, predicate, maxSecs)
-    local tStart = os.clock()
-    while (os.clock() - tStart) < (maxSecs or 3) do
-        for _, v in ipairs(parent:GetChildren()) do
-            if predicate(v) then return v end
-        end
-        task.wait(0.15)
-    end
-    return nil
-end
-
--- FIX for Bug #5: exact slot match, not substring find.
--- "Slot 1" ~= "Slot 10". Use pattern with word boundary.
-local function slotTextMatches(text, slot)
-    -- Try exact match first (e.g. "Slot 1" == "Slot 1")
-    if text == 'Slot ' .. tostring(slot) then return true end
-    if text == tostring(slot) then return true end
-    -- Pattern: number at end of string, not followed by digits
-    if text:match('%D'..tostring(slot)..'$') then return true end
-    if text:match('^'..tostring(slot)..'$') then return true end
-    return false
-end
+local YELLOW = Color3.fromRGB(220,180,0)
+local GREEN  = Color3.fromRGB(0,205,145)
+local RED    = Color3.fromRGB(200,60,60)
+local GREY   = Color3.fromRGB(110,128,155)
 
 local function dupeAxe()
     if dupeRunning then
         dupeRunning = false
-        setDupeStatus('Idle', Color3.fromRGB(110,128,155))
+        setStatus('Idle (cancelled)', GREY)
         return notify('Dupe cancelled.')
     end
 
     -- ── STEP 1: VALIDATE ─────────────────────────────
+    local axes = getAxes()
+    if #axes == 0 then
+        return notify('❌ No axes in inventory!')
+    end
+
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
         return notify('❌ Load your land first!')
     end
-    if #getAxes() == 0 then
-        return notify('❌ No axes in inventory!')
+
+    -- Must have a slot loaded (CurrentSaveSlot != -1)
+    if CurrentSaveSlot.Value == -1 then
+        return notify('❌ No save slot loaded! Load a slot in-game first, then dupe.')
     end
 
-    local lsGUI = Player.PlayerGui:FindFirstChild('LoadSaveGUI')
-    if not lsGUI then
-        return notify('❌ LoadSaveGUI not found. Try rejoining.')
+    -- Warn if dupe slot doesn't match loaded slot
+    if CurrentSaveSlot.Value ~= dupeSlot then
+        notify('⚠️ Dupe slot (' .. dupeSlot .. ') ≠ loaded slot (' .. CurrentSaveSlot.Value .. '). Set slider to ' .. CurrentSaveSlot.Value .. '!')
+        task.wait(2)
+        -- Auto-correct to current loaded slot
+        dupeSlot = CurrentSaveSlot.Value
+        notify('✅ Auto-corrected to slot ' .. dupeSlot)
+        task.wait(0.5)
     end
 
-    local plotCF    = prop.OriginSquare.CFrame
-    dupeRunning     = true
+    -- Don't start if server is already saving/loading
+    if CurrentlySavingOrLoading.Value == true then
+        return notify('❌ Server is busy saving/loading. Wait a moment.')
+    end
+
+    local plotCF   = prop.OriginSquare.CFrame
     local hookFired = false
-    setDupeStatus('🔄 Starting...', Color3.fromRGB(220,180,0))
-    notify('⏳ Starting dupe — do not move!')
+    dupeRunning     = true
+    setStatus('🔄 Starting...', YELLOW)
+    notify('⏳ Dupe starting — do not move!')
 
-    -- ── GLOBAL SAFETY TIMEOUT (FIX for Bug #1 + #2) ──
-    -- No matter what happens inside, this guarantees dupeRunning
-    -- resets after 25 seconds so the button works again.
-    task.delay(25, function()
-        if dupeRunning and not hookFired then
+    -- ── GLOBAL SAFETY TIMEOUT ────────────────────────
+    task.delay(40, function()
+        if dupeRunning then
             dupeRunning = false
-            setDupeStatus('Idle (timed out)', Color3.fromRGB(200,50,50))
-            notify('❌ Dupe timed out (25s). Check slot has a save.')
+            SelectLoadPlot.OnClientInvoke = nil
+            setStatus('Idle (timed out)', RED)
+            notify('❌ Dupe timed out after 40s.')
         end
     end)
 
-    -- ── STEP 2: HOOK SelectLoadPlot ──────────────────
-    -- FIX for Bug #4: don't restore a stale origHook.
-    -- We restore whatever the hook is AT THE TIME of restoring.
-    local function restoreHook()
-        -- intentionally blank — game's PropertyPurchasingClient
-        -- will re-set OnClientInvoke naturally on next equip/load.
-        -- Setting it to nil lets the game re-assign it cleanly.
-        pcall(function() SelectLoadPlot.OnClientInvoke = nil end)
-    end
+    -- ── STEP 2: UNEQUIP AXE TO BACKPACK ──────────────
+    -- Server void-kills char during load. Tool in Backpack survives.
+    -- Equipped tool might not survive depending on server config.
+    local h = hum()
+    if h then h:UnequipTools() end
+    task.wait(0.3)
+    setStatus('🔄 Axes unequipped', YELLOW)
 
-    local function ourHook(_model)
-        if hookFired then
-            -- Safety: if called again after first fire, return prop
-            return prop, 0
-        end
-        hookFired = true
-        setDupeStatus('🔄 Plot confirmed...', Color3.fromRGB(0,205,145))
-        notify('🔄 Plot confirmed — loading save...')
-
-        -- FIX for Bug #7: space out SetPropertyPurchValue calls,
-        -- max 4 instead of 10, with 0.5s between to avoid server kick.
-        task.spawn(function()
-            for _ = 1, 4 do
-                task.wait(0.5)
-                pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
-            end
-        end)
-
-        -- FIX for Bug #1: use safeWaitChar() instead of :Wait(25)
-        task.spawn(function()
-            local newChar = safeWaitChar(20)  -- properly times out after 20s
-            task.wait(2.5)
-            local nc = newChar or char()
-            if nc and nc:FindFirstChild('HumanoidRootPart') then
-                nc:PivotTo(plotCF + Vector3.new(0, 6, 0))
-                setDupeStatus('✅ Done!', Color3.fromRGB(0,205,145))
-                notify('✅ Done! Check your axes.')
-            else
-                setDupeStatus('⚠ Done (walk back)', Color3.fromRGB(220,180,0))
-                notify('⚠️ Done. Walk to your base manually.')
-            end
-            dupeRunning = false
-            restoreHook()
-        end)
-
-        return prop, 0
-    end
-
-    -- Keep hook alive until fired. hookLoopActive controls the loop.
-    -- FIX for Bug #6: save a local flag before loop ends.
-    local hookLoopActive = true
+    -- ── STEP 3: HOOK SelectLoadPlot ──────────────────
+    -- Server calls this after char respawns to ask where to place land.
+    -- We return the player's property so land loads automatically.
+    local hookLoop = true
     task.spawn(function()
         local tStart = os.clock()
-        while hookLoopActive and not hookFired and (os.clock()-tStart) < 60 do
-            pcall(function() SelectLoadPlot.OnClientInvoke = ourHook end)
+        while hookLoop and not hookFired and (os.clock()-tStart) < 60 do
+            pcall(function() SelectLoadPlot.OnClientInvoke = function(_model)
+                if hookFired then return prop, 0 end
+                hookFired = true
+                hookLoop  = false
+                setStatus('🏠 Confirming land...', GREEN)
+                notify('🔄 Land placement confirmed!')
+
+                -- Keep asserting property purchasing active
+                -- (Humanoid.Died in PropertyPurchasingClient fires exitAll → SetPropertyPurchasingValue(false))
+                if SetPropertyPurchValue then
+                    task.spawn(function()
+                        for _ = 1, 6 do
+                            task.wait(0.5)
+                            pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
+                        end
+                    end)
+                end
+
+                -- Wait for respawn + TP to base
+                task.spawn(function()
+                    local newChar = safeWaitChar(20)
+                    task.wait(3)  -- let the load fully complete
+                    local nc = newChar or char()
+                    if nc and nc:FindFirstChild('HumanoidRootPart') then
+                        nc:PivotTo(plotCF + Vector3.new(0, 6, 0))
+                        local axeCount = #getAxes()
+                        setStatus('✅ Done! Axes: ' .. axeCount, GREEN)
+                        notify('✅ Dupe complete! You have ' .. axeCount .. ' axe(s).')
+                    else
+                        setStatus('✅ Done! Walk to base.', GREEN)
+                        notify('✅ Dupe done — walk to your base.')
+                    end
+                    dupeRunning = false
+                end)
+
+                return prop, 0
+            end end)
             task.wait(0.03)
         end
-        local didTimeout = not hookFired  -- FIX Bug #6: check before we change state
-        hookLoopActive = false
-        if didTimeout then
-            -- Hook never fired within 60s: clean up
-            restoreHook()
-            -- dupeRunning already reset by 25s global timeout
+        -- Hook loop ended without firing
+        if not hookFired then
+            hookLoop = false
+            pcall(function() SelectLoadPlot.OnClientInvoke = nil end)
             if dupeRunning then
                 dupeRunning = false
-                setDupeStatus('Idle (hook timeout)', Color3.fromRGB(200,50,50))
-                notify('❌ Server never called SelectLoadPlot. Slot may be empty.')
+                setStatus('Idle (no response)', RED)
+                notify('❌ Server never sent SelectLoadPlot. Slot may be empty or cooldown active.')
             end
         end
     end)
 
-    -- ── STEP 3: OPEN LoadSaveGUI ─────────────────────
-    local openEvent = lsGUI:FindFirstChild('Open')
-    if openEvent then
-        pcall(function() openEvent:Fire() end)
-    else
-        local isOpen = lsGUI:FindFirstChild('IsOpen')
-        if isOpen then isOpen.Value = true end
-    end
+    task.wait(0.1)  -- let hook install
 
-    -- ── STEP 4: WAIT FOR SLOT LIST + CLICK (FIX Bug #8) ─
-    -- Poll for slot buttons instead of fixed 0.8s sleep.
-    setDupeStatus('🔍 Finding slot...', Color3.fromRGB(220,180,0))
+    -- ── STEP 4: SAVE SLOT ─────────────────────────────
+    -- THIS IS THE CRITICAL STEP that v7/v8/v9 all missed.
+    -- Saves current state (including axes in Backpack) to the slot.
+    -- Without this, the load would restore an old state with no extra axes.
+    setStatus('💾 Saving slot ' .. dupeSlot .. '...', YELLOW)
+    notify('💾 Saving slot ' .. dupeSlot .. '...')
 
-    local slotList = lsGUI:FindFirstChild('SlotList')
-    local slotClicked = false
-
-    if slotList then
-        local main = slotList:FindFirstChild('Main')
-        if main then
-            -- FIX Bug #8: poll until buttons appear, up to 3s
-            local slotBtn = waitForChild(main, function(v)
-                local sn = v:FindFirstChild('SlotName')
-                return sn and slotTextMatches(sn.Text, dupeSlot)
-            end, 3)
-
-            if slotBtn then
-                pcall(function() firesignal(slotBtn.MouseButton1Click) end)
-                slotClicked = true
-            else
-                -- Fallback: click by sorted position index
-                local buttons = {}
-                for _, v in ipairs(main:GetChildren()) do
-                    if v:IsA('TextButton') or v:IsA('Frame') then
-                        table.insert(buttons, v)
-                    end
-                end
-                table.sort(buttons, function(a, b)
-                    local ay = a:IsA('GuiObject') and a.Position.Y.Offset or 0
-                    local by = b:IsA('GuiObject') and b.Position.Y.Offset or 0
-                    return ay < by
-                end)
-                local target = buttons[dupeSlot]
-                if target then
-                    pcall(function() firesignal(target.MouseButton1Click) end)
-                    slotClicked = true
-                end
-            end
-        end
-    end
-
-    if not slotClicked then
-        hookLoopActive = false
-        restoreHook()
-        dupeRunning = false
-        setDupeStatus('Idle (slot not found)', Color3.fromRGB(200,50,50))
-        return notify('❌ Could not find Slot '..dupeSlot..' in GUI.')
-    end
-
-    -- ── STEP 5: WAIT FOR SLOTINFO + CLICK LOAD ───────
-    task.wait(0.6)  -- wait for SlotInfo panel to appear
-    setDupeStatus('🔄 Clicking Load...', Color3.fromRGB(220,180,0))
-
-    local slotInfo   = lsGUI:FindFirstChild('SlotInfo')
-    local loadClicked = false
-
-    local function tryClickLoad()
-        if slotInfo and slotInfo:FindFirstChild('Main') then
-            local loadBtn = slotInfo.Main:FindFirstChild('Load')
-            if loadBtn then
-                pcall(function() firesignal(loadBtn.MouseButton1Click) end)
-                return true
-            end
-        end
-        return false
-    end
-
-    if tryClickLoad() then
-        loadClicked = true
-    else
-        -- FIX Bug #9: retry up to 2s for Load button to appear
-        local tPoll = os.clock()
-        while (os.clock() - tPoll) < 2 and not loadClicked do
-            task.wait(0.2)
-            if tryClickLoad() then loadClicked = true end
-        end
-    end
-
-    -- ── FIX Bug #3: DIRECT RequestLoad FALLBACK ──────
-    -- If the GUI's load button didn't trigger RequestLoad (firesignal
-    -- failed silently), attempt to call RequestLoad directly.
-    -- The server expects: RequestLoad(slot, Player, versionMeta)
-    -- On the client we omit Player (server adds it automatically).
-    -- Try both 1-arg and 3-arg forms in case server logic varies.
-    if loadClicked or true then  -- always attempt fallback to be safe
-        task.delay(1.5, function()
-            if not hookFired and dupeRunning then
-                notify('🔄 GUI click uncertain — trying direct call...')
-                if RequestLoad then
-                    -- Attempt 3-arg form first (as documented in v8 comments)
-                    local ok = pcall(function()
-                        RequestLoad:InvokeServer(dupeSlot, Player, nil)
-                    end)
-                    if not ok then
-                        -- Fallback to 1-arg form
-                        pcall(function()
-                            RequestLoad:InvokeServer(dupeSlot)
-                        end)
-                    end
-                end
-            end
+    local saveOk = false
+    local saveResult = nil
+    local saveAttempts = 0
+    repeat
+        saveAttempts += 1
+        local ok, result = pcall(function()
+            return RequestSave:InvokeServer(dupeSlot)
         end)
+        if ok then
+            saveResult = result
+            saveOk = true
+        else
+            task.wait(1)
+        end
+    until saveOk or saveAttempts >= 3
+
+    if not saveOk then
+        hookLoop = false
+        dupeRunning = false
+        SelectLoadPlot.OnClientInvoke = nil
+        setStatus('Idle (save error)', RED)
+        return notify('❌ RequestSave call failed. Are you in-game?')
     end
 
-    if not loadClicked then
-        -- GUI method failed, but direct call fallback already queued above.
-        -- Don't abort — wait for hookFired or global timeout.
-        notify('⚠️ Load button not found — trying direct call...')
-        setDupeStatus('🔄 Direct call...', Color3.fromRGB(220,180,0))
-        return  -- let the direct call fallback + global timeout handle it
+    if saveResult == false then
+        -- Server returned false = already saving/loading, wait and retry
+        setStatus('⏳ Save busy, waiting...', YELLOW)
+        waitForSaveLoad(10)
+        task.wait(0.5)
+        local ok2, result2 = pcall(function()
+            return RequestSave:InvokeServer(dupeSlot)
+        end)
+        if not ok2 or result2 == false then
+            hookLoop = false
+            dupeRunning = false
+            SelectLoadPlot.OnClientInvoke = nil
+            setStatus('Idle (save busy)', RED)
+            return notify('❌ Server still busy. Try again in a few seconds.')
+        end
     end
 
-    setDupeStatus('⏳ Waiting for server...', Color3.fromRGB(0,205,145))
-    notify('✅ Load triggered! Waiting for server reset...')
+    setStatus('✅ Saved! Loading...', GREEN)
+    notify('✅ Saved! Now loading slot ' .. dupeSlot .. '...')
+    task.wait(0.6)  -- small gap between save and load
+
+    -- ── STEP 5: LOAD SLOT ─────────────────────────────
+    -- Server receives this, TPs char outside the map (into the void),
+    -- kills the character, respawns at spawn point, then calls
+    -- SelectLoadPlot.OnClientInvoke → our hook returns the property.
+    -- Axes in Backpack survive the void death → load adds axes from save → DOUBLED.
+    setStatus('🔄 Loading slot ' .. dupeSlot .. '...', YELLOW)
+    notify('🔄 Loading — character will reset...')
+
+    local loadResult = nil
+    local loadOk = false
+    local ok3, result3 = pcall(function()
+        return RequestLoad:InvokeServer(dupeSlot)
+    end)
+    if ok3 then
+        loadOk = true
+        loadResult = result3
+    end
+
+    if not loadOk then
+        hookLoop = false
+        dupeRunning = false
+        SelectLoadPlot.OnClientInvoke = nil
+        setStatus('Idle (load error)', RED)
+        return notify('❌ RequestLoad call failed. Are you in-game?')
+    end
+
+    if loadResult == false then
+        hookLoop = false
+        dupeRunning = false
+        SelectLoadPlot.OnClientInvoke = nil
+        setStatus('Idle (load cooldown)', RED)
+        return notify('❌ Load on cooldown. Wait ~30s and try again.')
+    end
+
+    -- loadResult == true means server accepted the request.
+    -- Character will get killed by server. Our SelectLoadPlot hook will fire.
+    setStatus('⏳ Waiting for server...', GREEN)
+    notify('⏳ Server accepted load. Character resetting...')
+    -- Hook handles everything from here.
 end
 
 -- ═══════════════════════════════════════════════════════
@@ -567,14 +547,6 @@ local function startAutoChop()
     end)
 end
 
-local function hookChar(c)
-    c.ChildAdded:Connect(function(o)
-        if o:IsA('Tool') then task.wait(0.25); pcall(applyAxeMod) end
-    end)
-end
-if char() then hookChar(char()) end
-Player.CharacterAdded:Connect(hookChar)
-
 -- ═══════════════════════════════════════════════════════
 --  UI THEME
 -- ═══════════════════════════════════════════════════════
@@ -595,7 +567,6 @@ local function N(cls,p)
     if p.Parent then o.Parent=p.Parent end
     return o
 end
-
 local function tw(obj,props,t)
     TweenService:Create(obj,TweenInfo.new(t or 0.15,Enum.EasingStyle.Quad),props):Play()
 end
@@ -616,7 +587,7 @@ rnd(win); strk(win,C.AccD,1)
 
 local bar=N('Frame',{Size=UDim2.new(1,0,0,TH),BackgroundColor3=C.Panel,BorderSizePixel=0,Parent=win})
 rnd(bar)
-N('TextLabel',{Text='⚡ Delta Hub v9',Size=UDim2.new(1,-60,1,0),Position=UDim2.new(0,12,0,0),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=bar})
+N('TextLabel',{Text='⚡ Delta Hub v10',Size=UDim2.new(1,-60,1,0),Position=UDim2.new(0,12,0,0),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=13,TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=bar})
 
 local minBtn=N('TextButton',{Text='─',Size=UDim2.new(0,28,0,22),Position=UDim2.new(1,-60,0.5,-11),BackgroundColor3=C.El,BorderSizePixel=0,Font=Enum.Font.GothamBold,TextSize=14,TextColor3=C.TS,Parent=bar})
 rnd(minBtn,UDim.new(0,6))
@@ -628,7 +599,7 @@ minBtn.MouseButton1Click:Connect(function()
     minBtn.Text=minimised and '+' or '─'
 end)
 
--- draggable title bar
+-- draggable
 do local d,ox,oy=false
     bar.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.MouseButton1 or i.UserInputType==Enum.UserInputType.Touch then d=true; ox=i.Position.X-win.Position.X.Offset; oy=i.Position.Y-win.Position.Y.Offset end end)
     UIS.InputChanged:Connect(function(i) if d and(i.UserInputType==Enum.UserInputType.MouseMovement or i.UserInputType==Enum.UserInputType.Touch)then win.Position=UDim2.new(0,i.Position.X-ox,0,i.Position.Y-oy) end end)
@@ -662,7 +633,7 @@ for name,btn in pairs(tabBtns) do
     btn.InputBegan:Connect(function(i) if i.UserInputType==Enum.UserInputType.Touch then switchTab(name) end end)
 end
 
--- ── UI COMPONENTS ─────────────────────────────────────
+-- ── UI COMPONENTS ────────────────────────────────────
 local function Section(p,txt)
     local f=N('Frame',{Size=UDim2.new(1,0,0,22),BackgroundTransparency=1,Parent=p})
     N('TextLabel',{Text=txt:upper(),Size=UDim2.new(1,0,1,0),BackgroundTransparency=1,Font=Enum.Font.GothamBold,TextSize=10,TextColor3=C.Acc,TextXAlignment=Enum.TextXAlignment.Left,Parent=f})
@@ -677,9 +648,8 @@ local function Hint(p,txt)
     rnd(l,UDim.new(0,5)); pd(l,5,5,8,8)
 end
 
-local function StatusLbl(p)
-    -- v9: live status label that shows real-time dupe progress
-    local l=N('TextLabel',{Text='Idle',Size=UDim2.new(1,0,0,BH),
+local function DynLabel(p, defaultTxt)
+    local l=N('TextLabel',{Text=defaultTxt or '',Size=UDim2.new(1,0,0,BH),
         BackgroundColor3=C.El,BackgroundTransparency=0,BorderSizePixel=0,
         Font=Enum.Font.GothamBold,TextSize=11,TextColor3=C.TS,
         TextXAlignment=Enum.TextXAlignment.Center,Parent=p})
@@ -772,17 +742,33 @@ end
 -- ── DUPE ─────────────────────────────────────────────
 do
     local Dp=pages['Dupe']
-    Section(Dp,'Status')
-    -- v9: Live status label (shows dupe progress in real-time)
-    dupeStatusLbl = StatusLbl(Dp)
-    Section(Dp,'How It Works')
-    Hint(Dp,'v9: Uses GUI firesignal + direct RequestLoad fallback. Hooks SelectLoadPlot so server loads on your land. Your character resets — axes are doubled. All v8 freeze bugs fixed.')
-    Section(Dp,'Slot Settings')
-    Hint(Dp,'Set slider to your save slot number. Make sure your land is loaded first.')
-    Slid(Dp,'Slot to Load',1,6,1,1,function(v) dupeSlot=v end)
-    Section(Dp,'Dupe Axe')
+    Section(Dp,'Live Status')
+    dupeStatusLbl = DynLabel(Dp, 'Idle')
+
+    -- Live "Currently Loaded Slot" display — updates every 2s
+    local loadedSlotLabel = DynLabel(Dp, 'Loaded Slot: checking...')
+    loadedSlotLabel.TextColor3 = Color3.fromRGB(0,180,255)
+    task.spawn(function()
+        while true do
+            task.wait(2)
+            pcall(function()
+                local v = CurrentSaveSlot.Value
+                loadedSlotLabel.Text = v == -1
+                    and 'Loaded Slot: NONE (load in-game first!)'
+                    or  'Loaded Slot: ' .. v .. '  ← set slider to match'
+                loadedSlotLabel.TextColor3 = v == -1
+                    and RED
+                    or  Color3.fromRGB(0,205,145)
+            end)
+        end
+    end)
+
+    Section(Dp,'How To Use')
+    Hint(Dp,'1. Load your land in-game\n2. Put axe in backpack (unequip)\n3. Set slider to match your loaded slot number\n4. Click Dupe Axe\n5. Confirm land placement screen\n6. Your axe will be doubled!')
+    Section(Dp,'Slot (must match loaded slot above)')
+    Slid(Dp,'Dupe Slot',1,6,1,1,function(v) dupeSlot=v end)
+    Section(Dp,'Actions')
     Btn(Dp,'🪓  Dupe Axe  (click again to cancel)',function() task.spawn(dupeAxe) end)
-    Section(Dp,'Manual')
     Btn(Dp,'Drop All Axes',function()
         local h=hum(); if h then h:UnequipTools() end; task.wait(0.25)
         local axes=getAxes()
@@ -799,10 +785,10 @@ end
 do
     local La=pages['Land']
     Section(La,'Free Land')
-    Hint(La,'Claims nearest free property for free by firing the purchase remote directly.')
+    Hint(La,'Claims nearest free property for free.')
     Btn(La,'🏠  Get Free Land',freeLand)
     Section(La,'Expand Land')
-    Hint(La,'Fires all 24 expansion remotes to instantly max your land size.')
+    Hint(La,'Fires all 24 expansion remotes to instantly max your land.')
     Btn(La,'📐  Max Land',maxLand)
     Section(La,'Combined')
     Btn(La,'⚡  Free Land + Max',function()
@@ -814,7 +800,7 @@ end
 do
     local Ax=pages['Axe']
     Section(Ax,'Modifiers')
-    Hint(Ax,'Equip axe first. Re-applies on every equip. Range values from AxeSuperClass.lua.')
+    Hint(Ax,'Equip axe first. Values from AxeSuperClass.lua (range ray, cooldown upvalue).')
     Slid(Ax,'Range',10,400,50,5,function(v) axeMods.rangeVal=v; if axeMods.rangeOn then pcall(applyAxeMod) end end)
     Tog(Ax,'Activate Axe Range',false,function(v) axeMods.rangeOn=v; pcall(applyAxeMod) end)
     Tog(Ax,'No Swing Cooldown',false,function(v) axeMods.noCdOn=v; pcall(applyAxeMod) end)
@@ -846,4 +832,4 @@ do
 end
 
 switchTab('Dupe')
-print('[Delta Hub v9] Loaded — all dupe freeze bugs fixed')
+print('[Delta Hub v10] Loaded — correct remotes: LoadSaveRequests.RequestSave/RequestLoad')
