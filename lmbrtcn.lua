@@ -133,7 +133,6 @@ local function dupeAxe()
         return notify('Dupe cancelled.')
     end
 
-    -- Pre-flight checks
     local prop = getMyProp()
     if not prop or not prop:FindFirstChild('OriginSquare') then
         return notify('❌ Load your land first!')
@@ -141,12 +140,8 @@ local function dupeAxe()
     if #getAxes() == 0 then
         return notify('❌ No axes in inventory!')
     end
-    local c = char()
-    if not c or not c:FindFirstChild('HumanoidRootPart') then
-        return notify('❌ No character found.')
-    end
 
-    local plotCF  = prop.OriginSquare.CFrame
+    local plotCF   = prop.OriginSquare.CFrame
     local loadSlot = dupeSlots.load
 
     -- Cooldown check
@@ -155,45 +150,40 @@ local function dupeAxe()
     if e1 then return notify('❌ Cooldown check failed.') end
     if not canLoad then return notify('❌ Cooldown active — wait ~60s.') end
 
-    -- Prime the server
     invokeWithTimeout(GetMetaData, 10)
 
     dupeRunning = true
     notify('Duping...')
 
-    -- ── HOW THE DUPE WORKS ───────────────────────────────────────
-    -- RequestLoad tells the server to load a save slot.
-    -- While RequestLoad is active, the server's normal "drop axe on death"
-    -- logic is suppressed — the load sequence takes priority.
-    -- So: fire RequestLoad → instantly void TP and die →
-    -- axe survives death because the server is mid-load →
-    -- land selection screen appears (SelectLoadPlot) →
-    -- confirm → spawn at base → axe from spawn + axe that survived = doubled.
-    -- Everything must be INSTANT after firing RequestLoad.
-    -- ────────────────────────────────────────────────────────────
+    -- ── THE HOOK ─────────────────────────────────────────────────
+    -- The game has its own LocalScript that sets SelectLoadPlot.OnClientInvoke
+    -- to show the land-selection GUI. When RequestLoad fires, the game's script
+    -- can overwrite our hook. Fix: reassert our hook every 30ms in a tight loop
+    -- from the moment RequestLoad fires until the hook actually catches.
+    -- ─────────────────────────────────────────────────────────────
 
-    -- Install the SelectLoadPlot hook before firing
-    local origHook = SelectLoadPlot.OnClientInvoke
     local hookFired = false
+    local origHook  = SelectLoadPlot.OnClientInvoke
 
-    SelectLoadPlot.OnClientInvoke = function(_model)
+    local function ourHook(_model)
+        if hookFired then return plotCF, 0 end  -- guard against double-fire
         hookFired = true
-        SelectLoadPlot.OnClientInvoke = origHook
+        notify('Plot selected — confirming...')
 
-        -- Must be in task.spawn — server is waiting for this hook to return.
-        -- Calling InvokeServer directly here = deadlock.
+        -- SetPropertyPurchValue in task.spawn — direct call here = deadlock
+        -- (server is blocked waiting for THIS hook to return)
         task.spawn(function()
             pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
         end)
 
-        -- Wait for respawn (server triggers it), then TP to base
+        -- Wait for server-triggered respawn then TP to base
         task.spawn(function()
             local newChar = Player.CharacterAdded:Wait(25) or char()
-            task.wait(2.5) -- let land finish loading before TP
+            task.wait(2.5)
             local nc = newChar or char()
             if nc and nc:FindFirstChild('HumanoidRootPart') then
                 nc:PivotTo(plotCF + Vector3.new(0, 6, 0))
-                notify('✅ Done! Axes should be doubled.')
+                notify('✅ Done! Check your axes.')
             else
                 notify('⚠️ Walk to your base manually.')
             end
@@ -203,34 +193,37 @@ local function dupeAxe()
         return plotCF, 0
     end
 
-    -- Watchdog in case hook never fires (wrong slot / empty slot)
+    -- Persistent hook loop — reasserts ourHook every 30ms so the game's
+    -- own client script cannot permanently overwrite us
     task.spawn(function()
         local start = os.clock()
         while not hookFired and (os.clock() - start) < 45 do
-            task.wait(0.5)
+            SelectLoadPlot.OnClientInvoke = ourHook
+            task.wait(0.03)
         end
         if not hookFired then
             SelectLoadPlot.OnClientInvoke = origHook
             dupeRunning = false
-            notify('❌ No response from server — is the slot correct?')
+            notify('❌ Timed out — check slot number matches your loaded save.')
         end
     end)
 
-    -- Fire RequestLoad — fire-and-forget, killed when character respawns
+    -- Fire RequestLoad fire-and-forget — will be killed when char resets, that is normal
     task.spawn(function()
         pcall(function() RequestLoad:InvokeServer(loadSlot) end)
     end)
 
-    -- Re-capture character fresh — yields happened above, old ref may be stale
-    -- Use PivotTo which reliably replicates vs direct CFrame assignment
-    -- LT2 has a server-side kill plane below the map — this causes a real
-    -- server-seen death while RequestLoad is active, which drops the axe
-    -- to the ground. RequestLoad then saves inventory, restores axe on respawn.
-    -- Dropped axe on ground + restored axe from save = doubled.
-    local lc = char()
-    if lc then
-        lc:PivotTo(CFrame.new(0, -500, 0))
-    end
+    -- Kill character so the server proceeds to SelectLoadPlot step.
+    -- Must be OFF the land (so server knows to ask for new plot placement).
+    -- Humanoid.Health = 0 is the only reliable server-replicated kill from
+    -- a LocalScript — BreakJoints and Head:Destroy do NOT replicate through FE.
+    -- Client has network ownership of its own Humanoid so Health writes replicate.
+    local c2  = char()
+    local hrp = c2 and c2:FindFirstChild('HumanoidRootPart')
+    local h2  = c2 and c2:FindFirstChild('Humanoid')
+    if hrp then hrp.CFrame = CFrame.new(0, 500, 0) end  -- move off land first
+    task.wait(0.05)
+    if h2 then h2.Health = 0 end  -- server-side kill
 end
 
 -- ═══════════════════════════════════════════════════════
