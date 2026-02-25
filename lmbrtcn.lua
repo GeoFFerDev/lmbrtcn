@@ -1,46 +1,52 @@
 --[[
-    LT2 Axe Dupe v2 - Property Purchasing Mode Bypass
-    Reverse engineered from remote spy logs.
+    LT2 Axe Dupe v3 - Correct Mechanism
+    Based on remote spy log analysis.
 
-    HOW IT WORKS:
-    Normally RequestLoad clears your inventory before restoring saved items.
-    But if you briefly toggle SetPropertyPurchasingValue (true then false)
-    right before calling RequestLoad, the server uses a different load path
-    that does NOT clear your backpack first. You keep your current axes AND
-    receive the saved ones — doubling your count each run.
+    HOW IT ACTUALLY WORKS:
+    1. SetPropertyPurchasingValue bypass tells the server to ADD axes on top
+       of your existing backpack instead of clearing it first
+    2. RequestLoad fires → server gives all saved axes (ConfirmIdentity fires
+       for each one) then calls SelectLoadPlot.OnClientInvoke on the client
+    3. SelectLoadPlot puts the game in property placement mode (camera scriptable,
+       character frozen waiting for plot selection)
+    4. We kill the character WHILE CurrentlySavingOrLoading is still true on
+       the server — this is key, the server skips the normal backpack clear
+       on death because a load is in progress
+    5. Character respawns at default spawn with ALL axes intact (doubled)
+    6. Plot selection UI appears and then closes itself
 
-    SETUP:
-    - Have at least 1 axe in your backpack
-    - Must already have a save in slot 1 (or change SLOT below)
-    - Run in a level 7+ executor (Synapse X, Solara, etc.)
+    REQUIREMENTS:
+    - At least 1 axe in backpack
+    - A save in SLOT that contains at least 1 axe
+    - Level 7+ executor (Synapse X, Solara, etc.)
 
     USAGE:
-    1. Run the script once → you get 2x axes
-    2. Walk around / wait 2 seconds for axes to fully initialize
-    3. Save your slot manually via in-game save menu
-    4. Run again → 4x, then 8x, etc.
-    
-    Or set AUTO_SAVE = true to have it save automatically each cycle.
-    Set CYCLES to run multiple rounds in one go (careful with anti-cheat).
+    - Set SLOT to whichever slot your save is in (default 1)
+    - Run script
+    - Wait ~10 seconds for full cycle
+    - After first run: save manually, then run again to double again
+    - Or set AUTO_SAVE = true
 ]]
 
-local RS  = game:GetService("ReplicatedStorage")
-local lp  = game:GetService("Players").LocalPlayer
+local RS      = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
+local lp      = Players.LocalPlayer
 
--- ── CONFIG ────────────────────────────────────────────────────────────────
-local SLOT      = 1     -- save slot number (check GetMetaData output to confirm)
-local CYCLES    = 1     -- how many dupe cycles to run (1 = safe, 3+ = risky)
-local AUTO_SAVE = false -- auto-save after each cycle so next run doubles again
-local DELAY     = 0.1   -- seconds between SetPropertyPurchasingValue calls
--- ─────────────────────────────────────────────────────────────────────────
+-- Remotes
+local ClientMayLoad         = RS.LoadSaveRequests.ClientMayLoad
+local RequestLoad           = RS.LoadSaveRequests.RequestLoad
+local RequestSave           = RS.LoadSaveRequests.RequestSave
+local SetPropertyPurchasing = RS.PropertyPurchasing.SetPropertyPurchasingValue
+local SelectLoadPlot        = RS.PropertyPurchasing.SelectLoadPlot
 
-local ClientMayLoad          = RS.LoadSaveRequests.ClientMayLoad
-local GetMetaData            = RS.LoadSaveRequests.GetMetaData
-local RequestLoad            = RS.LoadSaveRequests.RequestLoad
-local RequestSave            = RS.LoadSaveRequests.RequestSave
-local SetPropertyPurchasing  = RS.PropertyPurchasing.SetPropertyPurchasingValue
+-- Config
+local SLOT      = 1     -- your save slot number
+local AUTO_SAVE = false -- auto-save after dupe so you can chain runs
+local CYCLES    = 1     -- number of dupe cycles (each doubles axes)
 
-local function log(msg) print("[AxeDupe] " .. msg) end
+local function log(msg)
+    print("[AxeDupe v3] " .. tostring(msg))
+end
 
 local function countAxes()
     local n = 0
@@ -56,114 +62,146 @@ local function countAxes()
     return n
 end
 
-local function getSlotWithSaves()
-    local meta, err = GetMetaData:InvokeServer(lp)
-    if not meta then
-        log("GetMetaData failed: " .. tostring(err))
-        return nil
+local function killChar()
+    local char = lp.Character
+    if not char then return end
+    -- Teleport into the void — same as what the working script does
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CFrame = CFrame.new(0, -500, 0)
     end
-    -- Return configured slot if it has saves, otherwise find one
-    if meta[SLOT] and meta[SLOT].NumSaves > 0 then
-        log("Slot " .. SLOT .. " has " .. meta[SLOT].NumSaves .. " saves")
-        return SLOT
+    -- Also zero health as backup
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if hum then
+        hum.Health = 0
     end
-    for i, slotData in ipairs(meta) do
-        if slotData.NumSaves > 0 then
-            log("Using slot " .. i .. " (has " .. slotData.NumSaves .. " saves)")
-            return i
-        end
-    end
-    return nil
 end
 
-local function dupeOnce(slot)
+local function waitForRespawn()
+    local newChar = lp.CharacterAdded:Wait()
+    -- Wait for humanoid to be fully loaded
+    newChar:WaitForChild("Humanoid")
+    newChar:WaitForChild("HumanoidRootPart")
+    task.wait(1.5)
+    return newChar
+end
+
+local function dupeOnce()
     local before = countAxes()
     log("Axes before: " .. before)
 
-    -- Step 1: Verify load is allowed
+    -- Step 1: Check server is OK to load
     local mayLoad = ClientMayLoad:InvokeServer(lp)
     if not mayLoad then
-        log("ERROR: ClientMayLoad denied. Are you currently saving?")
+        log("ERROR: ClientMayLoad denied. Wait a moment and retry.")
         return false
     end
 
-    -- Step 2: The property purchasing bypass
-    -- Toggle false → true → false rapidly to change server-side load behavior
-    task.wait(DELAY)
+    -- Step 2: Hook SelectLoadPlot BEFORE firing RequestLoad
+    -- The server will call this on us mid-load — we intercept it,
+    -- kill the character (while CurrentlySavingOrLoading=true so backpack
+    -- is preserved), wait for respawn, then return to let the server finish.
+    local originalCallback = getcallbackvalue(SelectLoadPlot, "OnClientInvoke")
+
+    SelectLoadPlot.OnClientInvoke = function(structureModel)
+        log("SelectLoadPlot fired — axes should now be in backpack. Killing character...")
+
+        -- Kill the character while load is still in progress
+        -- Server won't clear backpack because CurrentlySavingOrLoading is true
+        task.spawn(killChar)
+
+        -- Wait for respawn at default spawn
+        log("Waiting for respawn...")
+        waitForRespawn()
+        log("Respawned! Axes should be doubled.")
+
+        -- Restore original callback so subsequent runs work correctly
+        SelectLoadPlot.OnClientInvoke = originalCallback
+
+        -- Return nil plot (no land placed — that's fine, we just want the axes)
+        return nil, 0
+    end
+
+    -- Step 3: SetPropertyPurchasingValue bypass
+    -- false → true → false tells server to add axes on top rather than clear
     SetPropertyPurchasing:InvokeServer(false)
-    task.wait(DELAY)
+    task.wait(0.15)
     SetPropertyPurchasing:InvokeServer(true)
-    task.wait(DELAY)
+    task.wait(0.15)
     SetPropertyPurchasing:InvokeServer(false)
-    task.wait(DELAY)
+    task.wait(0.15)
 
-    -- Step 3: Load - server gives saved items WITHOUT clearing current backpack
-    log("Firing RequestLoad on slot " .. slot .. "...")
-    local ok, err2, _ = RequestLoad:InvokeServer(slot, lp)
+    -- Step 4: Fire RequestLoad in a separate thread
+    -- It will block until SelectLoadPlot resolves (which we handle above)
+    log("Firing RequestLoad on slot " .. SLOT .. "...")
+    local loadDone = false
+    task.spawn(function()
+        local ok, err = RequestLoad:InvokeServer(SLOT, lp)
+        loadDone = true
+        if ok then
+            log("RequestLoad returned: success")
+        else
+            log("RequestLoad returned: " .. tostring(err))
+        end
+    end)
 
-    if not ok then
-        log("RequestLoad failed: " .. tostring(err2))
+    -- Step 5: Wait for the full cycle to complete
+    -- (SelectLoadPlot will handle the kill + respawn internally)
+    local timeout = 30
+    local elapsed = 0
+    while not loadDone and elapsed < timeout do
+        task.wait(0.5)
+        elapsed += 0.5
+    end
+
+    if not loadDone then
+        log("WARNING: RequestLoad timed out. SelectLoadPlot may not have fired.")
+        -- Restore callback in case something went wrong
+        SelectLoadPlot.OnClientInvoke = originalCallback
         return false
     end
 
-    -- Step 4: Wait for axes to initialize (ConfirmIdentity calls need time)
-    task.wait(2)
+    task.wait(2) -- let ConfirmIdentity calls finish initializing axes
 
     local after = countAxes()
     log("Axes after: " .. after)
 
     if after > before then
-        log("SUCCESS: gained " .. (after - before) .. " axe(s)!")
+        log("SUCCESS: " .. before .. " → " .. after .. " axes!")
         return true
     else
-        log("No change detected - method may need adjustment or save doesn't have axes")
+        log("No increase detected. Check: does your save actually have axes in it?")
         return false
     end
 end
 
-local function saveSlot(slot)
-    log("Auto-saving to slot " .. slot .. "...")
-    local ok, err = RequestSave:InvokeServer(slot, lp)
-    if ok then
-        log("Save successful!")
-    else
-        log("Save failed: " .. tostring(err))
-    end
-    task.wait(1)
-end
+-- Main
+log("=== LT2 Axe Dupe v3 ===")
+log("Slot: " .. SLOT .. " | Cycles: " .. CYCLES .. " | AutoSave: " .. tostring(AUTO_SAVE))
+task.wait(1)
 
--- ── MAIN ─────────────────────────────────────────────────────────────────
-log("=== LT2 Axe Dupe v2 Starting ===")
-
--- Find a valid slot
-local slot = getSlotWithSaves()
-if not slot then
-    log("ERROR: No save slot with saves found. Save your game first!")
-    return
-end
-
-local totalBefore = countAxes()
-if totalBefore == 0 then
-    log("WARNING: No axes in backpack. You need at least 1 axe to dupe!")
-end
-
--- Run cycles
 for i = 1, CYCLES do
-    log("--- Cycle " .. i .. "/" .. CYCLES .. " ---")
-    local success = dupeOnce(slot)
-    
-    if success and AUTO_SAVE then
-        task.wait(1)
-        saveSlot(slot)
+    log("--- Cycle " .. i .. " / " .. CYCLES .. " ---")
+    local ok = dupeOnce()
+
+    if ok and AUTO_SAVE then
+        task.wait(2)
+        log("Auto-saving...")
+        local saveOk, saveErr = RequestSave:InvokeServer(SLOT, lp)
+        if saveOk then
+            log("Saved successfully!")
+        else
+            log("Save failed: " .. tostring(saveErr))
+        end
     end
 
     if i < CYCLES then
-        task.wait(2)
+        task.wait(3)
     end
 end
 
-local totalAfter = countAxes()
-log("=== Done! Axes: " .. totalBefore .. " → " .. totalAfter .. " ===")
-if totalAfter > totalBefore then
-    log("Remember to save manually if AUTO_SAVE is off!")
+local final = countAxes()
+log("=== Done! Final axe count: " .. final .. " ===")
+if not AUTO_SAVE then
+    log("Save your game manually before running again to chain dupes!")
 end
