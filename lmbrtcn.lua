@@ -166,14 +166,33 @@ local function dupeAxe()
     local origHook  = SelectLoadPlot.OnClientInvoke
 
     local function ourHook(_model)
-        if hookFired then return plotCF, 0 end  -- guard against double-fire
+        -- BUG FIX 1: Must return the property *Instance*, NOT a CFrame.
+        -- The server's SelectLoadPlot:InvokeClient() expects the client to return
+        -- the chosen property model object (same type as workspace.Properties children),
+        -- plus a rotation integer (0-3).  Returning plotCF (a CFrame) caused the
+        -- server to receive a wrong type and silently fail the entire load.
+        if hookFired then return prop, 0 end  -- guard against double-fire
         hookFired = true
         notify('Plot selected — confirming...')
 
         -- SetPropertyPurchValue in task.spawn — direct call here = deadlock
-        -- (server is blocked waiting for THIS hook to return)
+        -- (server is blocked waiting for THIS hook to return).
+        -- We still need to signal true immediately; the loop above will keep it alive.
         task.spawn(function()
             pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
+        end)
+
+        -- BUG FIX 2: Counter the game's own exitAll race.
+        -- PropertyPurchasingClient has: v_u_4.Died:connect(exitAll)
+        -- exitAll calls: SetPropertyPurchasingValue:InvokeServer(false)
+        -- When the char dies (from RequestLoad server-reset), exitAll fires and
+        -- tells the server "player cancelled" — BEFORE our load completes.
+        -- Fix: re-assert the "true" signal after exitAll fires, via a tight loop.
+        task.spawn(function()
+            for _ = 1, 8 do
+                task.wait(0.4)
+                pcall(function() SetPropertyPurchValue:InvokeServer(true) end)
+            end
         end)
 
         -- Wait for server-triggered respawn then TP to base
@@ -190,7 +209,10 @@ local function dupeAxe()
             dupeRunning = false
         end)
 
-        return plotCF, 0
+        -- BUG FIX 1 (return): Return the property Instance, not a CFrame.
+        -- The server does: local plot, rotation = SelectLoadPlot:InvokeClient(player, models)
+        -- It then uses `plot` as a workspace property object, not a CFrame.
+        return prop, 0
     end
 
     -- Persistent hook loop — reasserts ourHook every 30ms so the game's
@@ -218,14 +240,19 @@ local function dupeAxe()
     -- Humanoid.Health = 0 is the only reliable server-replicated kill from
     -- a LocalScript — BreakJoints and Head:Destroy do NOT replicate through FE.
     -- Client has network ownership of its own Humanoid so Health writes replicate.
+    -- Kill character so the server proceeds to SelectLoadPlot step.
+    -- NOTE: h2.Health = 0 does NOT reliably replicate through FE from a LocalScript.
+    -- The hrp teleport to Y=-2000 is what actually triggers the server kill plane.
+    -- BUG FIX 3: We must kill ONLY after setting up the hook loop, so the hook
+    -- is in place before the server-side reset + SelectLoadPlot call happens.
+    -- (Already the case here — hook loop is running above before we kill.)
     local c2  = char()
     local hrp = c2 and c2:FindFirstChild('HumanoidRootPart')
     local h2  = c2 and c2:FindFirstChild('Humanoid')
-    -- Y = -2000 is BELOW the map (negative Y = down in Roblox).
-    -- Was wrongly set to +500 (up in air) which is why char never moved.
-    -- LT2 has a server-side kill plane under the map at around Y = -100.
+    -- Teleport below map kill plane. LT2 kill plane is around Y = -100.
     if hrp then hrp.CFrame = CFrame.new(0, -2000, 0) end
-    if h2  then h2.Health = 0 end  -- backup kill in case kill plane is slow
+    -- h2.Health = 0 is a backup; may not replicate through FE but harmless to include.
+    if h2  then h2.Health = 0 end
 end
 
 -- ═══════════════════════════════════════════════════════
